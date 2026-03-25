@@ -50,11 +50,12 @@ class ScoutFlutter {
         if (!isInitialized) return;
         final span = FlutterOTel.tracer.startSpan(
           'screen_view',
-          attributes: <String, Object>{
-            'screen.name': screenName,
-            if (_userId != null) 'enduser.id': _userId!,
-            if (_userEmail != null) 'enduser.email': _userEmail!,
-          }.toAttributes(),
+          attributes:
+              <String, Object>{
+                'screen.name': screenName,
+                if (_userId != null) 'enduser.id': _userId!,
+                if (_userEmail != null) 'enduser.email': _userEmail!,
+              }.toAttributes(),
         );
         addBreadcrumb('navigation', 'screen: $screenName');
         span.end();
@@ -115,12 +116,13 @@ class ScoutFlutter {
         if (!isInitialized) return;
         final span = FlutterOTel.tracer.startSpan(
           'tap',
-          attributes: <String, Object>{
-            'target.type': elementName,
-            'target.label': elementDescription,
-            if (_userId != null) 'enduser.id': _userId!,
-            if (_userEmail != null) 'enduser.email': _userEmail!,
-          }.toAttributes(),
+          attributes:
+              <String, Object>{
+                'target.type': elementName,
+                'target.label': elementDescription,
+                if (_userId != null) 'enduser.id': _userId!,
+                if (_userEmail != null) 'enduser.email': _userEmail!,
+              }.toAttributes(),
         );
         addBreadcrumb('tap', '$elementName: $elementDescription');
         span.end();
@@ -161,10 +163,18 @@ class ScoutFlutter {
       final deviceInfo = DeviceInfoPlugin();
       final info = await deviceInfo.deviceInfo;
       final data = info.data;
-      if (data['model'] != null) attrs['device.model'] = data['model'].toString();
-      if (data['manufacturer'] != null) attrs['device.manufacturer'] = data['manufacturer'].toString();
-      if (data['brand'] != null) attrs['device.brand'] = data['brand'].toString();
-      if (data['isPhysicalDevice'] != null) attrs['device.is_physical'] = data['isPhysicalDevice'].toString();
+      if (data['model'] != null) {
+        attrs['device.model'] = data['model'].toString();
+      }
+      if (data['manufacturer'] != null) {
+        attrs['device.manufacturer'] = data['manufacturer'].toString();
+      }
+      if (data['brand'] != null) {
+        attrs['device.brand'] = data['brand'].toString();
+      }
+      if (data['isPhysicalDevice'] != null) {
+        attrs['device.is_physical'] = data['isPhysicalDevice'].toString();
+      }
     } catch (_) {
       // Device info unavailable
     }
@@ -183,9 +193,7 @@ class ScoutFlutter {
         details.exceptionAsString(),
         details.exception,
         details.stack,
-        attributes: {
-          'breadcrumbs': _breadcrumbManager.toJsonString(),
-        },
+        attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
       );
     };
 
@@ -198,9 +206,7 @@ class ScoutFlutter {
         'Uncaught error',
         error,
         stack,
-        attributes: {
-          'breadcrumbs': _breadcrumbManager.toJsonString(),
-        },
+        attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
       );
       return true;
     };
@@ -218,9 +224,7 @@ class ScoutFlutter {
       error.toString(),
       error,
       stackTrace,
-      attributes: {
-        'breadcrumbs': _breadcrumbManager.toJsonString(),
-      },
+      attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
     );
   }
 
