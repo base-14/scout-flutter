@@ -31,16 +31,37 @@ String? _extractScreenName(Route<dynamic> route) {
 class AutoNameNavigatorObserver extends NavigatorObserver {
   final void Function(String screenName)? onScreenChanged;
   final void Function(String screenName, Duration loadTime)? onScreenLoadTime;
+  final void Function(String screenName)? onScreenEnter;
+  final void Function(String screenName, Duration timeSpent)? onScreenExit;
 
   /// The most recently resolved screen name.
   String? currentScreenName;
 
-  AutoNameNavigatorObserver({this.onScreenChanged, this.onScreenLoadTime});
+  /// Tracking state for view session duration.
+  Stopwatch? _viewStopwatch;
+  String? _activeViewName;
+
+  AutoNameNavigatorObserver({
+    this.onScreenChanged,
+    this.onScreenLoadTime,
+    this.onScreenEnter,
+    this.onScreenExit,
+  });
 
   void _handlePush(Route<dynamic> route) {
     final stopwatch = Stopwatch()..start();
     final name = _extractScreenName(route);
     if (name != null) {
+      // End tracking for the previous view, if any.
+      if (_activeViewName != null) {
+        _viewStopwatch?.stop();
+        onScreenExit?.call(_activeViewName!, _viewStopwatch!.elapsed);
+      }
+      // Start tracking the new view.
+      _activeViewName = name;
+      _viewStopwatch = Stopwatch()..start();
+      onScreenEnter?.call(name);
+
       currentScreenName = name;
       onScreenChanged?.call(name);
       // Measure load time after first frame renders.
@@ -66,6 +87,17 @@ class AutoNameNavigatorObserver extends NavigatorObserver {
       } else {
         resolvedName = route.runtimeType.toString();
       }
+
+      // End tracking for the previous view, if any.
+      if (_activeViewName != null) {
+        _viewStopwatch?.stop();
+        onScreenExit?.call(_activeViewName!, _viewStopwatch!.elapsed);
+      }
+      // Start tracking the new view.
+      _activeViewName = resolvedName;
+      _viewStopwatch = Stopwatch()..start();
+      onScreenEnter?.call(resolvedName);
+
       currentScreenName = resolvedName;
       onScreenChanged?.call(resolvedName);
       onScreenLoadTime?.call(resolvedName, stopwatch.elapsed);
@@ -74,8 +106,20 @@ class AutoNameNavigatorObserver extends NavigatorObserver {
 
   void _handlePop(Route<dynamic>? previousRoute) {
     if (previousRoute == null) return;
+
+    // End tracking for the current (popped) view.
+    if (_activeViewName != null) {
+      _viewStopwatch?.stop();
+      onScreenExit?.call(_activeViewName!, _viewStopwatch!.elapsed);
+    }
+
     final name = _extractScreenName(previousRoute);
     if (name != null) {
+      // Start tracking the previous view we're returning to.
+      _activeViewName = name;
+      _viewStopwatch = Stopwatch()..start();
+      onScreenEnter?.call(name);
+
       currentScreenName = name;
       onScreenChanged?.call(name);
     }

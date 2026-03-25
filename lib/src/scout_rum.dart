@@ -1,13 +1,16 @@
 import 'dart:ui';
 
 import 'package:battery_plus/battery_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 
 import 'auto_name_navigator_observer.dart';
+import 'frame_metrics_collector.dart';
 import 'long_task_detector.dart';
+import 'native_vitals_collector.dart';
 import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
 import 'breadcrumb_manager.dart';
@@ -35,6 +38,13 @@ class ScoutFlutter {
   static LongTaskDetector? _longTaskDetector;
   static AppLifecycleListener? _lifecycleListener;
   static AutoNameNavigatorObserver? _navObserver;
+  static FrameMetricsCollector? _frameMetricsCollector;
+  static NativeVitalsCollector? _nativeVitalsCollector;
+  static Stopwatch? _coldStartStopwatch;
+  static bool _coldStartRecorded = false;
+  static Stopwatch? _warmStartStopwatch;
+  static String _connectivityType = 'unknown';
+  static dynamic _meter;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -56,8 +66,7 @@ class ScoutFlutter {
           attributes:
               <String, Object>{
                 'screen.name': screenName,
-                if (_userId != null) 'enduser.id': _userId!,
-                if (_userEmail != null) 'enduser.email': _userEmail!,
+                ..._commonAttributes(),
               }.toAttributes(),
         );
         addBreadcrumb('navigation', 'screen: $screenName');
@@ -71,9 +80,29 @@ class ScoutFlutter {
               <String, Object>{
                 'screen.name': screenName,
                 'screen.load_time': loadTime.inMilliseconds / 1000.0,
-                if (_userId != null) 'enduser.id': _userId!,
-                if (_userEmail != null) 'enduser.email': _userEmail!,
+                ..._commonAttributes(),
               }.toAttributes(),
+        );
+        span.end();
+      },
+      onScreenEnter: (screenName) {
+        if (!isInitialized) return;
+        addBreadcrumb('view_session', 'entered: $screenName');
+      },
+      onScreenExit: (screenName, timeSpent) {
+        if (!isInitialized) return;
+        final span = FlutterOTel.tracer.startSpan(
+          'view_session',
+          attributes:
+              <String, Object>{
+                'screen.name': screenName,
+                'view.time_spent': timeSpent.inMilliseconds / 1000.0,
+                ..._commonAttributes(),
+              }.toAttributes(),
+        );
+        addBreadcrumb(
+          'view_session',
+          'exited: $screenName (${timeSpent.inMilliseconds}ms)',
         );
         span.end();
       },
@@ -91,6 +120,7 @@ class ScoutFlutter {
   /// For navigation tracking, add [navigatorObserver] to your app's
   /// navigatorObservers list.
   static Future<void> initialize({required ScoutFlutterConfig config}) async {
+    _coldStartStopwatch ??= Stopwatch()..start();
     WidgetsFlutterBinding.ensureInitialized();
 
     final resourceAttrs = <String, Object>{
@@ -106,7 +136,7 @@ class ScoutFlutter {
       tracerName: config.serviceName,
       endpoint: config.endpoint,
       secure: config.secure,
-      enableMetrics: false,
+      enableMetrics: config.enablePerformanceMetrics,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
     );
@@ -132,6 +162,24 @@ class ScoutFlutter {
     if (config.enableAnrDetection) {
       _setupAnrDetection(config);
     }
+
+    if (config.enablePerformanceMetrics) {
+      _meter = FlutterOTel.meter(name: config.serviceName);
+      _setupFrameMetrics();
+      _setupNativeVitals();
+    }
+
+    if (config.enableStartupTracking) {
+      _measureColdStart();
+    }
+
+    if (config.enableConnectivityTracking) {
+      Connectivity().onConnectivityChanged.listen((result) {
+        if (result.isNotEmpty) {
+          _connectivityType = result.first.name;
+        }
+      });
+    }
   }
 
   static void _setupGlobalTapDetection(ScoutFlutterConfig config) {
@@ -146,8 +194,7 @@ class ScoutFlutter {
                 'user_interaction.type': 'click',
                 'user_interaction.target': elementDescription,
                 'user_interaction.target.type': elementName,
-                if (_userId != null) 'enduser.id': _userId!,
-                if (_userEmail != null) 'enduser.email': _userEmail!,
+                ..._commonAttributes(),
               }.toAttributes(),
         );
         addBreadcrumb('tap', '$elementName: $elementDescription');
@@ -159,17 +206,65 @@ class ScoutFlutter {
 
   static void _setupLifecycleTracking() {
     _lifecycleListener = AppLifecycleListener(
+      onInactive: () {
+        if (_config?.enableStartupTracking == true) {
+          _warmStartStopwatch = Stopwatch()..start();
+        }
+      },
       onPause: () {
         addBreadcrumb('lifecycle', 'app_paused');
       },
       onResume: () {
         addBreadcrumb('lifecycle', 'app_resumed');
+        if (_config?.enableStartupTracking == true) {
+          _measureWarmStart();
+        }
       },
       onExitRequested: () async {
         addBreadcrumb('lifecycle', 'app_exit_requested');
         return AppExitResponse.exit;
       },
     );
+  }
+
+  static void _measureColdStart() {
+    if (_coldStartRecorded || _coldStartStopwatch == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_coldStartRecorded) return;
+      _coldStartRecorded = true;
+      final duration = _coldStartStopwatch!.elapsed;
+      _coldStartStopwatch!.stop();
+      final span = FlutterOTel.tracer.startSpan(
+        'app_startup',
+        attributes: <String, Object>{
+          'app_startup.type': 'cold',
+          'app_startup.duration': duration.inMilliseconds / 1000.0,
+          ..._commonAttributes(),
+        }.toAttributes(),
+      );
+      addBreadcrumb('startup', 'cold_start: ${duration.inMilliseconds}ms');
+      span.end();
+    });
+  }
+
+  static void _measureWarmStart() {
+    if (_warmStartStopwatch == null) return;
+    final stopwatch = _warmStartStopwatch!;
+    _warmStartStopwatch = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final duration = stopwatch.elapsed;
+      stopwatch.stop();
+      final span = FlutterOTel.tracer.startSpan(
+        'app_startup',
+        attributes: <String, Object>{
+          'app_startup.type': 'warm',
+          'app_startup.duration': duration.inMilliseconds / 1000.0,
+          ..._commonAttributes(),
+        }.toAttributes(),
+      );
+      addBreadcrumb('startup', 'warm_start: ${duration.inMilliseconds}ms');
+      span.end();
+    });
   }
 
   static void _setupLongTaskDetection(ScoutFlutterConfig config) {
@@ -189,8 +284,7 @@ class ScoutFlutter {
                 'long_task.duration': duration.inMilliseconds / 1000.0,
                 'long_task.threshold': config.longTaskThresholdMs / 1000.0,
                 if (currentScreen != null) 'screen.name': currentScreen,
-                if (_userId != null) 'enduser.id': _userId!,
-                if (_userEmail != null) 'enduser.email': _userEmail!,
+                ..._commonAttributes(),
               }.toAttributes(),
         );
         addBreadcrumb('long_task', 'Long task: ${duration.inMilliseconds}ms');
@@ -214,8 +308,7 @@ class ScoutFlutter {
               'anr.duration': durationMs / 1000.0,
               'anr.threshold': config.anrThresholdMs / 1000.0,
               if (currentScreen != null) 'screen.name': currentScreen,
-              if (_userId != null) 'enduser.id': _userId!,
-              if (_userEmail != null) 'enduser.email': _userEmail!,
+              ..._commonAttributes(),
             }.toAttributes(),
       );
       addBreadcrumb('anr', 'App not responding: ${durationMs}ms');
@@ -224,6 +317,95 @@ class ScoutFlutter {
     await ScoutPlatformChannel.startAnrDetection(
       thresholdMs: config.anrThresholdMs,
     );
+  }
+
+  static void _setupFrameMetrics() {
+    final meter = _meter;
+
+    final buildHistogram = meter.createHistogram<double>(
+      name: 'flutter.frame.build_time',
+      description: 'Flutter widget build duration',
+      unit: 's',
+    );
+
+    final rasterHistogram = meter.createHistogram<double>(
+      name: 'flutter.frame.raster_time',
+      description: 'Flutter GPU raster duration',
+      unit: 's',
+    );
+
+    _frameMetricsCollector = FrameMetricsCollector(
+      onFrameTiming: (buildTime, rasterTime) {
+        final screenAttr = <String, Object>{
+          if (_navObserver?.currentScreenName != null)
+            'screen.name': _navObserver!.currentScreenName!,
+        }.toAttributes();
+
+        buildHistogram.record(
+          buildTime.inMicroseconds / 1000000.0,
+          screenAttr,
+        );
+        rasterHistogram.record(
+          rasterTime.inMicroseconds / 1000000.0,
+          screenAttr,
+        );
+      },
+      onFrozenFrame: (duration) {
+        if (!isInitialized) return;
+        String? currentScreen;
+        if (_navObserver != null) {
+          currentScreen = _navObserver!.currentScreenName;
+        }
+        final span = FlutterOTel.tracer.startSpan(
+          'frozen_frame',
+          attributes: <String, Object>{
+            'frozen_frame.duration': duration.inMilliseconds / 1000.0,
+            if (currentScreen != null) 'screen.name': currentScreen,
+            ..._commonAttributes(),
+          }.toAttributes(),
+        );
+        addBreadcrumb(
+          'frozen_frame',
+          'Frozen frame: ${duration.inMilliseconds}ms',
+        );
+        span.end();
+      },
+    );
+    _frameMetricsCollector!.start();
+  }
+
+  static void _setupNativeVitals() {
+    final meter = _meter;
+
+    final memoryHistogram = meter.createHistogram<double>(
+      name: 'flutter.memory.usage',
+      description: 'App memory usage',
+      unit: 'By',
+    );
+
+    final cpuHistogram = meter.createHistogram<double>(
+      name: 'flutter.cpu.usage',
+      description: 'App CPU usage percentage',
+      unit: '%',
+    );
+
+    _nativeVitalsCollector = NativeVitalsCollector(
+      onMemory: (usedBytes, maxBytes) {
+        final attrs = <String, Object>{
+          if (_navObserver?.currentScreenName != null)
+            'screen.name': _navObserver!.currentScreenName!,
+        }.toAttributes();
+        memoryHistogram.record(usedBytes.toDouble(), attrs);
+      },
+      onCpu: (cpuPercent) {
+        final attrs = <String, Object>{
+          if (_navObserver?.currentScreenName != null)
+            'screen.name': _navObserver!.currentScreenName!,
+        }.toAttributes();
+        cpuHistogram.record(cpuPercent, attrs);
+      },
+    );
+    _nativeVitalsCollector!.start();
   }
 
   static Future<Map<String, Object>> _collectDeviceAttributes() async {
@@ -258,6 +440,14 @@ class ScoutFlutter {
     } catch (_) {
       // Device info unavailable
     }
+
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity.isNotEmpty) {
+        _connectivityType = connectivity.first.name;
+        attrs['network.connection.type'] = _connectivityType;
+      }
+    } catch (_) {}
 
     return attrs;
   }
@@ -320,6 +510,15 @@ class ScoutFlutter {
     _userEmail = null;
   }
 
+  static Map<String, Object> _commonAttributes() {
+    return {
+      if (_userId != null) 'enduser.id': _userId!,
+      if (_userEmail != null) 'enduser.email': _userEmail!,
+      if (_connectivityType != 'unknown')
+        'network.connection.type': _connectivityType,
+    };
+  }
+
   /// Current user ID, if set.
   static String? get userId => _userId;
 
@@ -332,8 +531,7 @@ class ScoutFlutter {
   /// Log a custom business event as a span.
   static void logEvent(String name, {Map<String, dynamic>? attributes}) {
     final attrMap = <String, Object>{
-      if (_userId != null) 'enduser.id': _userId!,
-      if (_userEmail != null) 'enduser.email': _userEmail!,
+      ..._commonAttributes(),
       ...?attributes,
     };
     final span = FlutterOTel.tracer.startSpan(
@@ -353,8 +551,17 @@ class ScoutFlutter {
     _tapDetector = null;
     _longTaskDetector?.stop();
     _longTaskDetector = null;
+    _frameMetricsCollector?.stop();
+    _frameMetricsCollector = null;
+    _nativeVitalsCollector?.stop();
+    _nativeVitalsCollector = null;
     _lifecycleListener?.dispose();
     _lifecycleListener = null;
     _navObserver = null;
+    _meter = null;
+    _coldStartStopwatch = null;
+    _coldStartRecorded = false;
+    _warmStartStopwatch = null;
+    _connectivityType = 'unknown';
   }
 }

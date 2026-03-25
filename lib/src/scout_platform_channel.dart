@@ -21,6 +21,16 @@ class ScoutPlatformChannel {
     });
   }
 
+  static Future<Map<String, dynamic>> getMemoryUsage() async {
+    final result = await _channel.invokeMapMethod<String, dynamic>('getMemoryUsage');
+    return result ?? {};
+  }
+
+  static Future<Map<String, dynamic>> getCpuUsage() async {
+    final result = await _channel.invokeMapMethod<String, dynamic>('getCpuUsage');
+    return result ?? {};
+  }
+
   /// Set up handler for ANR events from native side.
   static void setAnrHandler(void Function(int durationMs) onAnr) {
     _channel.setMethodCallHandler((call) async {

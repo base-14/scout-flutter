@@ -13,6 +13,7 @@ dependencies:
   meta: ^1.16.0
   battery_plus: ^6.0.0
   device_info_plus: ^11.0.0
+  connectivity_plus: ^6.0.0
 
 dev_dependencies:
   flutter_test:

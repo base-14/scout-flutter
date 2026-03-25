@@ -39,12 +39,21 @@ class ScoutFlutterConfig {
   /// Values below 20 are clamped to 20.
   final int longTaskThresholdMs;
 
+  /// Whether to collect performance metrics (FPS, memory, CPU, frame times).
+  final bool enablePerformanceMetrics;
+
   /// Whether to detect Application Not Responding (ANR) events.
   final bool enableAnrDetection;
 
   /// Threshold in milliseconds for an ANR event.
   /// Values below 1000 are clamped to 1000.
   final int anrThresholdMs;
+
+  /// Whether to track app startup time (cold and warm start).
+  final bool enableStartupTracking;
+
+  /// Whether to track network connectivity type as a resource attribute.
+  final bool enableConnectivityTracking;
 
   const ScoutFlutterConfig({
     required this.serviceName,
@@ -57,10 +66,13 @@ class ScoutFlutterConfig {
     this.enableLifecycleTracking = true,
     this.secure = true,
     this.customGestureDetector,
+    this.enablePerformanceMetrics = true,
     this.enableLongTaskDetection = true,
     int longTaskThresholdMs = 100,
     this.enableAnrDetection = true,
     int anrThresholdMs = 5000,
+    this.enableStartupTracking = true,
+    this.enableConnectivityTracking = true,
   }) : longTaskThresholdMs = longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs;
 }
