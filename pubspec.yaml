@@ -1,0 +1,20 @@
+name: scout_flutter
+description: Zero-config OpenTelemetry RUM for Flutter. Auto-captures taps, navigation, errors, and lifecycle.
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+  flutter: ">=3.7.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutterrific_opentelemetry: ^0.3.2
+  meta: ^1.16.0
+  battery_plus: ^6.0.0
+  device_info_plus: ^11.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
