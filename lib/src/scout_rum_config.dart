@@ -15,7 +15,8 @@ class GestureDetectorInfo {
 }
 
 /// Callback type for custom gesture detection.
-typedef CustomGestureElementDetector = GestureDetectorInfo? Function(Widget widget);
+typedef CustomGestureElementDetector =
+    GestureDetectorInfo? Function(Widget widget);
 
 /// Configuration for Scout Flutter RUM.
 @immutable

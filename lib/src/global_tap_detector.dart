@@ -44,14 +44,11 @@ class _TreeAnnotation {
 /// No widget wrapper needed — just call [start] after binding is initialized.
 class GlobalTapDetector {
   final void Function(String elementName, String elementDescription)
-      onTapDetected;
+  onTapDetected;
   final CustomGestureElementDetector? customGestureDetector;
   final _pointerDownPositions = <int, Offset>{};
 
-  GlobalTapDetector({
-    required this.onTapDetected,
-    this.customGestureDetector,
-  });
+  GlobalTapDetector({required this.onTapDetected, this.customGestureDetector});
 
   void start() {
     GestureBinding.instance.pointerRouter.addGlobalRoute(_handleEvent);
@@ -95,8 +92,10 @@ class GlobalTapDetector {
       // outside, prune the entire subtree.
       if (ro != null && ro is RenderBox && ro.hasSize) {
         final transform = ro.getTransformTo(null);
-        final paintBounds =
-            MatrixUtils.transformRect(transform, ro.paintBounds);
+        final paintBounds = MatrixUtils.transformRect(
+          transform,
+          ro.paintBounds,
+        );
 
         if (!paintBounds.contains(globalPosition)) return;
       }

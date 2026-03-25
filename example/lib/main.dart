@@ -25,10 +25,7 @@ class ExampleApp extends StatelessWidget {
     return MaterialApp(
       title: 'Scout Flutter Example',
       navigatorObservers: [ScoutFlutter.navigatorObserver],
-      theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
       home: const HomeScreen(),
     );
   }
@@ -66,9 +63,10 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 12),
           FilledButton(
             onPressed: () {
-              ScoutFlutter.logEvent('custom_event', attributes: {
-                'source': 'home_screen',
-              });
+              ScoutFlutter.logEvent(
+                'custom_event',
+                attributes: {'source': 'home_screen'},
+              );
             },
             child: const Text('Log Custom Event'),
           ),

@@ -114,9 +114,10 @@ class AutoNameNavigatorObserver extends NavigatorObserver {
   /// should be skipped during the subtree walk.
   static bool _isFrameworkWidget(String typeName) {
     // Generic type suffixes (e.g. _ModalScope<dynamic>).
-    final baseName = typeName.contains('<')
-        ? typeName.substring(0, typeName.indexOf('<'))
-        : typeName;
+    final baseName =
+        typeName.contains('<')
+            ? typeName.substring(0, typeName.indexOf('<'))
+            : typeName;
 
     const knownFrameworkWidgets = {
       // Layout
@@ -159,15 +160,28 @@ class AutoNameNavigatorObserver extends NavigatorObserver {
     // clearly internal, identified by common framework-internal patterns.
     if (baseName.startsWith('_')) {
       const knownInternalPrefixes = [
-        '_ModalScope', '_ModalScopeStatus', '_FocusInheritedScope',
-        '_InheritedTheme', '_ActionsScope', '_ScaffoldScope',
-        '_ScaffoldMessengerScope', '_LocalizationsScope',
-        '_SharedAppModel', '_OverlayEntryWidget', '_Theater',
-        '_RenderTheaterMarker', '_EffectiveTickerMode',
-        '_FocusScopeWithExternalFocusNode', '_ShortcutRegistrarScope',
-        '_InkFeatures', '_BodyBuilder', '_FloatingActionButtonTransition',
-        '_ZoomPageTransition', '_ZoomEnterTransition',
-        '_ZoomExitTransition', '_PageTransitionsThemeTransitions',
+        '_ModalScope',
+        '_ModalScopeStatus',
+        '_FocusInheritedScope',
+        '_InheritedTheme',
+        '_ActionsScope',
+        '_ScaffoldScope',
+        '_ScaffoldMessengerScope',
+        '_LocalizationsScope',
+        '_SharedAppModel',
+        '_OverlayEntryWidget',
+        '_Theater',
+        '_RenderTheaterMarker',
+        '_EffectiveTickerMode',
+        '_FocusScopeWithExternalFocusNode',
+        '_ShortcutRegistrarScope',
+        '_InkFeatures',
+        '_BodyBuilder',
+        '_FloatingActionButtonTransition',
+        '_ZoomPageTransition',
+        '_ZoomEnterTransition',
+        '_ZoomExitTransition',
+        '_PageTransitionsThemeTransitions',
         '_ScrollNotificationObserverScope',
       ];
       for (final prefix in knownInternalPrefixes) {
