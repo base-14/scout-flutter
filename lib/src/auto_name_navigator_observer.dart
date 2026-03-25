@@ -30,29 +30,45 @@ String? _extractScreenName(Route<dynamic> route) {
 /// 4. Route class name (last resort)
 class AutoNameNavigatorObserver extends NavigatorObserver {
   final void Function(String screenName)? onScreenChanged;
+  final void Function(String screenName, Duration loadTime)? onScreenLoadTime;
 
-  AutoNameNavigatorObserver({this.onScreenChanged});
+  /// The most recently resolved screen name.
+  String? currentScreenName;
+
+  AutoNameNavigatorObserver({this.onScreenChanged, this.onScreenLoadTime});
 
   void _handlePush(Route<dynamic> route) {
+    final stopwatch = Stopwatch()..start();
     final name = _extractScreenName(route);
     if (name != null) {
+      currentScreenName = name;
       onScreenChanged?.call(name);
+      // Measure load time after first frame renders.
+      if (onScreenLoadTime != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onScreenLoadTime?.call(name, stopwatch.elapsed);
+        });
+      }
       return;
     }
 
     // Strategy 3: post-frame subtree walk.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      String resolvedName;
       if (route is ModalRoute) {
         final subtreeContext = route.subtreeContext;
         if (subtreeContext != null) {
           final widgetName = _findPageWidgetName(subtreeContext as Element);
-          final resolvedName = widgetName ?? route.runtimeType.toString();
-          onScreenChanged?.call(resolvedName);
-          return;
+          resolvedName = widgetName ?? route.runtimeType.toString();
+        } else {
+          resolvedName = route.runtimeType.toString();
         }
+      } else {
+        resolvedName = route.runtimeType.toString();
       }
-      // Strategy 4: route class name.
-      onScreenChanged?.call(route.runtimeType.toString());
+      currentScreenName = resolvedName;
+      onScreenChanged?.call(resolvedName);
+      onScreenLoadTime?.call(resolvedName, stopwatch.elapsed);
     });
   }
 
@@ -60,6 +76,7 @@ class AutoNameNavigatorObserver extends NavigatorObserver {
     if (previousRoute == null) return;
     final name = _extractScreenName(previousRoute);
     if (name != null) {
+      currentScreenName = name;
       onScreenChanged?.call(name);
     }
   }

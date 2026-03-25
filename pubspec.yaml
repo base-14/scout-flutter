@@ -18,3 +18,12 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.base14.scout_flutter
+        pluginClass: ScoutFlutterPlugin
+      ios:
+        pluginClass: ScoutFlutterPlugin
