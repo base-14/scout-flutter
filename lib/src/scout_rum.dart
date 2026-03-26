@@ -5,9 +5,12 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:dartastic_opentelemetry/dartastic_opentelemetry.dart'
+    show OtlpHttpSpanExporter, OtlpHttpExporterConfig, SimpleSpanProcessor;
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 
 import 'auto_name_navigator_observer.dart';
+import 'fixed_http_metric_exporter.dart';
 import 'frame_metrics_collector.dart';
 import 'long_task_detector.dart';
 import 'native_vitals_collector.dart';
@@ -130,13 +133,33 @@ class ScoutFlutter {
       ...await _collectDeviceAttributes(),
     };
 
+    // Build the HTTP endpoint for export (both traces and metrics).
+    String httpEndpoint = config.endpoint;
+    if (!httpEndpoint.startsWith('http://') &&
+        !httpEndpoint.startsWith('https://')) {
+      httpEndpoint =
+          config.secure ? 'https://$httpEndpoint' : 'http://$httpEndpoint';
+    }
+
+    // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
+    final spanExporter = OtlpHttpSpanExporter(
+      OtlpHttpExporterConfig(endpoint: httpEndpoint),
+    );
+
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
       serviceVersion: config.serviceVersion,
       tracerName: config.serviceName,
-      endpoint: config.endpoint,
+      endpoint: httpEndpoint,
       secure: config.secure,
       enableMetrics: config.enablePerformanceMetrics,
+      spanProcessor: SimpleSpanProcessor(spanExporter),
+      // Use our fixed exporter to work around the frozen protobuf bug
+      // in dartastic_opentelemetry's OtlpHttpMetricExporter.
+      // See: https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/1
+      metricExporter: config.enablePerformanceMetrics
+          ? FixedHttpMetricExporter(endpoint: httpEndpoint)
+          : null,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
     );

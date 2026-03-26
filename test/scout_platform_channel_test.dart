@@ -97,7 +97,7 @@ void main() {
       });
 
       // Simulate native side sending an ANR event
-      final ByteData? message = const StandardMethodCodec().encodeMethodCall(
+      final ByteData message = const StandardMethodCodec().encodeMethodCall(
         const MethodCall('onAnrDetected', 5500),
       );
       await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -112,7 +112,7 @@ void main() {
         detections.add(durationMs);
       });
 
-      final ByteData? message = const StandardMethodCodec().encodeMethodCall(
+      final ByteData message = const StandardMethodCodec().encodeMethodCall(
         const MethodCall('unknownMethod', 1234),
       );
       await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
