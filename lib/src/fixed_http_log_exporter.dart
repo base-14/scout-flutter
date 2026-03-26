@@ -161,20 +161,16 @@ class FixedHttpLogExporter {
 
     final Uint8List bodyBytes = request.writeToBuffer();
 
-    try {
-      final response = await http
-          .post(Uri.parse(_endpoint), headers: headers, body: bodyBytes)
-          .timeout(_timeout);
+    final response = await http
+        .post(Uri.parse(_endpoint), headers: headers, body: bodyBytes)
+        .timeout(_timeout);
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return true;
-      }
-      throw http.ClientException(
-        'Export failed with status code ${response.statusCode}',
-      );
-    } catch (e) {
-      return false;
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return true;
     }
+    throw http.ClientException(
+      'Export failed with status code ${response.statusCode}',
+    );
   }
 
   Duration _jitteredDelay(int attempt) {

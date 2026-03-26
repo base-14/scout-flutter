@@ -362,7 +362,7 @@ class _TrackedHttpClientRequest implements HttpClientRequest {
         url: _trackingUrl,
         statusCode: response.statusCode,
         durationMs: _stopwatch.elapsedMilliseconds,
-        responseSize: response.contentLength,
+        responseSize: response.contentLength < 0 ? 0 : response.contentLength,
       ));
       return response;
     } catch (e) {
