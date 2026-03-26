@@ -63,6 +63,7 @@ class ScoutFlutter {
   static OfflineQueue? _offlineQueue;
   static Timer? _offlineFlushTimer;
   static ScoutDioInterceptor? _dioInterceptor;
+  static DebugPrintCallback? _originalDebugPrint;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -90,51 +91,33 @@ class ScoutFlutter {
   static NavigatorObserver get navigatorObserver {
     _navObserver ??= AutoNameNavigatorObserver(
       onScreenChanged: (screenName) {
-        if (!isInitialized) return;
-        final span = FlutterOTel.tracer.startSpan(
-          'screen_view',
-          attributes:
-              <String, Object>{
-                'screen.name': screenName,
-                ..._commonAttributes(),
-              }.toAttributes(),
-        );
+        _emitSpan('screen_view', {
+          'screen.name': screenName,
+          ..._commonAttributes(),
+        });
         addBreadcrumb('navigation', 'screen: $screenName');
-        span.end();
       },
       onScreenLoadTime: (screenName, loadTime) {
-        if (!isInitialized) return;
-        final span = FlutterOTel.tracer.startSpan(
-          'screen_load',
-          attributes:
-              <String, Object>{
-                'screen.name': screenName,
-                'screen.load_time': loadTime.inMilliseconds / 1000.0,
-                ..._commonAttributes(),
-              }.toAttributes(),
-        );
-        span.end();
+        _emitSpan('screen_load', {
+          'screen.name': screenName,
+          'screen.load_time': loadTime.inMilliseconds / 1000.0,
+          ..._commonAttributes(),
+        });
       },
       onScreenEnter: (screenName) {
         if (!isInitialized) return;
         addBreadcrumb('view_session', 'entered: $screenName');
       },
       onScreenExit: (screenName, timeSpent) {
-        if (!isInitialized) return;
-        final span = FlutterOTel.tracer.startSpan(
-          'view_session',
-          attributes:
-              <String, Object>{
-                'screen.name': screenName,
-                'view.time_spent': timeSpent.inMilliseconds / 1000.0,
-                ..._commonAttributes(),
-              }.toAttributes(),
-        );
+        _emitSpan('view_session', {
+          'screen.name': screenName,
+          'view.time_spent': timeSpent.inMilliseconds / 1000.0,
+          ..._commonAttributes(),
+        });
         addBreadcrumb(
           'view_session',
           'exited: $screenName (${timeSpent.inMilliseconds}ms)',
         );
-        span.end();
       },
     );
     return _navObserver!;
@@ -234,6 +217,7 @@ class ScoutFlutter {
         if (result.isNotEmpty) {
           _connectivityType = result.first.name;
         }
+        _flushOfflineQueue();
       });
     }
 
@@ -266,6 +250,17 @@ class ScoutFlutter {
         headers: config.headers,
       );
       _logger = scout_log.ScoutLogger(onLog: _onLogEntry);
+
+      // Capture debugPrint() as info-level logs
+      if (config.capturePrintStatements) {
+        _originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          _originalDebugPrint!(message, wrapWidth: wrapWidth);
+          if (message != null) {
+            _logger?.logInfo(message);
+          }
+        };
+      }
     }
 
     // HTTP tracking via HttpOverrides
@@ -281,23 +276,45 @@ class ScoutFlutter {
     }
   }
 
+  /// Creates and immediately ends a span, subject to sampling and beforeSend.
+  static void _emitSpan(String name, Map<String, Object> attributes) {
+    if (!isInitialized) return;
+    if (!(_sessionManager?.isSampled ?? true)) return;
+
+    if (_config?.beforeSend != null) {
+      final event = <String, dynamic>{
+        'type': 'span',
+        'name': name,
+        ...attributes,
+      };
+      final result = _config!.beforeSend!(event);
+      if (result == null) return;
+      attributes = {};
+      for (final entry in result.entries) {
+        if (entry.key != 'type' && entry.key != 'name' && entry.value != null) {
+          attributes[entry.key] = entry.value as Object;
+        }
+      }
+    }
+
+    final span = FlutterOTel.tracer.startSpan(
+      name,
+      attributes: attributes.isEmpty ? null : attributes.toAttributes(),
+    );
+    span.end();
+  }
+
   static void _setupGlobalTapDetection(ScoutFlutterConfig config) {
     _tapDetector = GlobalTapDetector(
       customGestureDetector: config.customGestureDetector,
       onTapDetected: (elementName, elementDescription) {
-        if (!isInitialized) return;
-        final span = FlutterOTel.tracer.startSpan(
-          'user_interaction',
-          attributes:
-              <String, Object>{
-                'user_interaction.type': 'click',
-                'user_interaction.target': elementDescription,
-                'user_interaction.target.type': elementName,
-                ..._commonAttributes(),
-              }.toAttributes(),
-        );
+        _emitSpan('user_interaction', {
+          'user_interaction.type': 'click',
+          'user_interaction.target': elementDescription,
+          'user_interaction.target.type': elementName,
+          ..._commonAttributes(),
+        });
         addBreadcrumb('tap', '$elementName: $elementDescription');
-        span.end();
       },
     );
     _tapDetector!.start();
@@ -335,16 +352,12 @@ class ScoutFlutter {
       _coldStartRecorded = true;
       final duration = _coldStartStopwatch!.elapsed;
       _coldStartStopwatch!.stop();
-      final span = FlutterOTel.tracer.startSpan(
-        'app_startup',
-        attributes: <String, Object>{
-          'app_startup.type': 'cold',
-          'app_startup.duration': duration.inMilliseconds / 1000.0,
-          ..._commonAttributes(),
-        }.toAttributes(),
-      );
+      _emitSpan('app_startup', {
+        'app_startup.type': 'cold',
+        'app_startup.duration': duration.inMilliseconds / 1000.0,
+        ..._commonAttributes(),
+      });
       addBreadcrumb('startup', 'cold_start: ${duration.inMilliseconds}ms');
-      span.end();
     });
   }
 
@@ -355,16 +368,12 @@ class ScoutFlutter {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final duration = stopwatch.elapsed;
       stopwatch.stop();
-      final span = FlutterOTel.tracer.startSpan(
-        'app_startup',
-        attributes: <String, Object>{
-          'app_startup.type': 'warm',
-          'app_startup.duration': duration.inMilliseconds / 1000.0,
-          ..._commonAttributes(),
-        }.toAttributes(),
-      );
+      _emitSpan('app_startup', {
+        'app_startup.type': 'warm',
+        'app_startup.duration': duration.inMilliseconds / 1000.0,
+        ..._commonAttributes(),
+      });
       addBreadcrumb('startup', 'warm_start: ${duration.inMilliseconds}ms');
-      span.end();
     });
   }
 
@@ -372,24 +381,17 @@ class ScoutFlutter {
     _longTaskDetector = LongTaskDetector(
       threshold: Duration(milliseconds: config.longTaskThresholdMs),
       onLongTask: (duration) {
-        if (!isInitialized) return;
-        // Resolve current screen name from the navigator observer
         String? currentScreen;
         if (_navObserver != null) {
           currentScreen = _navObserver!.currentScreenName;
         }
-        final span = FlutterOTel.tracer.startSpan(
-          'long_task',
-          attributes:
-              <String, Object>{
-                'long_task.duration': duration.inMilliseconds / 1000.0,
-                'long_task.threshold': config.longTaskThresholdMs / 1000.0,
-                if (currentScreen != null) 'screen.name': currentScreen,
-                ..._commonAttributes(),
-              }.toAttributes(),
-        );
+        _emitSpan('long_task', {
+          'long_task.duration': duration.inMilliseconds / 1000.0,
+          'long_task.threshold': config.longTaskThresholdMs / 1000.0,
+          if (currentScreen != null) 'screen.name': currentScreen,
+          ..._commonAttributes(),
+        });
         addBreadcrumb('long_task', 'Long task: ${duration.inMilliseconds}ms');
-        span.end();
       },
     );
     _longTaskDetector!.start();
@@ -397,23 +399,17 @@ class ScoutFlutter {
 
   static Future<void> _setupAnrDetection(ScoutFlutterConfig config) async {
     ScoutPlatformChannel.setAnrHandler((durationMs) {
-      if (!isInitialized) return;
       String? currentScreen;
       if (_navObserver != null) {
         currentScreen = _navObserver!.currentScreenName;
       }
-      final span = FlutterOTel.tracer.startSpan(
-        'anr',
-        attributes:
-            <String, Object>{
-              'anr.duration': durationMs / 1000.0,
-              'anr.threshold': config.anrThresholdMs / 1000.0,
-              if (currentScreen != null) 'screen.name': currentScreen,
-              ..._commonAttributes(),
-            }.toAttributes(),
-      );
+      _emitSpan('anr', {
+        'anr.duration': durationMs / 1000.0,
+        'anr.threshold': config.anrThresholdMs / 1000.0,
+        if (currentScreen != null) 'screen.name': currentScreen,
+        ..._commonAttributes(),
+      });
       addBreadcrumb('anr', 'App not responding: ${durationMs}ms');
-      span.end();
     });
     await ScoutPlatformChannel.startAnrDetection(
       thresholdMs: config.anrThresholdMs,
@@ -437,9 +433,12 @@ class ScoutFlutter {
 
     _frameMetricsCollector = FrameMetricsCollector(
       onFrameTiming: (buildTime, rasterTime) {
+        if (!(_sessionManager?.isSampled ?? true)) return;
         final screenAttr = <String, Object>{
           if (_navObserver?.currentScreenName != null)
             'screen.name': _navObserver!.currentScreenName!,
+          if (_sessionManager != null)
+            'session.id': _sessionManager!.sessionId,
         }.toAttributes();
 
         buildHistogram.record(
@@ -452,24 +451,19 @@ class ScoutFlutter {
         );
       },
       onFrozenFrame: (duration) {
-        if (!isInitialized) return;
         String? currentScreen;
         if (_navObserver != null) {
           currentScreen = _navObserver!.currentScreenName;
         }
-        final span = FlutterOTel.tracer.startSpan(
-          'frozen_frame',
-          attributes: <String, Object>{
-            'frozen_frame.duration': duration.inMilliseconds / 1000.0,
-            if (currentScreen != null) 'screen.name': currentScreen,
-            ..._commonAttributes(),
-          }.toAttributes(),
-        );
+        _emitSpan('frozen_frame', {
+          'frozen_frame.duration': duration.inMilliseconds / 1000.0,
+          if (currentScreen != null) 'screen.name': currentScreen,
+          ..._commonAttributes(),
+        });
         addBreadcrumb(
           'frozen_frame',
           'Frozen frame: ${duration.inMilliseconds}ms',
         );
-        span.end();
       },
     );
     _frameMetricsCollector!.start();
@@ -496,16 +490,22 @@ class ScoutFlutter {
 
     _nativeVitalsCollector = NativeVitalsCollector(
       onMemory: (usedBytes, maxBytes) {
+        if (!(_sessionManager?.isSampled ?? true)) return;
         final attrs = <String, Object>{
           if (_navObserver?.currentScreenName != null)
             'screen.name': _navObserver!.currentScreenName!,
+          if (_sessionManager != null)
+            'session.id': _sessionManager!.sessionId,
         }.toAttributes();
         memoryGauge.record(usedBytes.toDouble(), attrs);
       },
       onCpu: (cpuPercent) {
+        if (!(_sessionManager?.isSampled ?? true)) return;
         final attrs = <String, Object>{
           if (_navObserver?.currentScreenName != null)
             'screen.name': _navObserver!.currentScreenName!,
+          if (_sessionManager != null)
+            'session.id': _sessionManager!.sessionId,
         }.toAttributes();
         cpuGauge.record(cpuPercent, attrs);
       },
@@ -640,11 +640,7 @@ class ScoutFlutter {
       ..._commonAttributes(),
       ...?attributes,
     };
-    final span = FlutterOTel.tracer.startSpan(
-      name,
-      attributes: attrMap.isEmpty ? null : attrMap.toAttributes(),
-    );
-    span.end();
+    _emitSpan(name, attrMap);
   }
 
   /// Log a structured message.
@@ -669,17 +665,37 @@ class ScoutFlutter {
     if (!isInitialized) return;
     if (!(_sessionManager?.isSampled ?? true)) return;
 
+    var attributes = <String, Object>{
+      'http.method': data.method,
+      'http.url': data.url.toString(),
+      'http.status_code': data.statusCode,
+      'http.response_content_length': data.responseSize,
+      'http.duration_ms': data.durationMs,
+      if (data.error != null) 'http.error': data.error!,
+      ..._commonAttributes(),
+    };
+
+    if (_config?.beforeSend != null) {
+      final event = <String, dynamic>{
+        'type': 'span',
+        'name': 'http.request',
+        ...attributes,
+      };
+      final result = _config!.beforeSend!(event);
+      if (result == null) return;
+      attributes = {};
+      for (final entry in result.entries) {
+        if (entry.key != 'type' &&
+            entry.key != 'name' &&
+            entry.value != null) {
+          attributes[entry.key] = entry.value as Object;
+        }
+      }
+    }
+
     final span = FlutterOTel.tracer.startSpan(
       'http.request',
-      attributes: <String, Object>{
-        'http.method': data.method,
-        'http.url': data.url.toString(),
-        'http.status_code': data.statusCode,
-        'http.response_content_length': data.responseSize,
-        'http.duration_ms': data.durationMs,
-        if (data.error != null) 'http.error': data.error!,
-        ..._commonAttributes(),
-      }.toAttributes(),
+      attributes: attributes.isEmpty ? null : attributes.toAttributes(),
     );
     if (data.error != null) {
       span.setStatus(SpanStatusCode.Error, data.error!);
@@ -689,6 +705,18 @@ class ScoutFlutter {
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     if (!(_sessionManager?.isSampled ?? true)) return;
+
+    if (_config?.beforeSend != null) {
+      final event = <String, dynamic>{
+        'type': 'log',
+        'severity': entry.level.severityText,
+        'message': entry.message,
+        ...?entry.attributes,
+      };
+      final result = _config!.beforeSend!(event);
+      if (result == null) return;
+    }
+
     final logRecord = ScoutLogRecord(
       severityNumber: entry.level.severityNumber,
       severityText: entry.level.severityText,
@@ -703,18 +731,49 @@ class ScoutFlutter {
         ...?entry.attributes,
       },
     );
-    _logExporter?.export([logRecord]);
+    _logExporter?.export([logRecord]).then((success) {
+      if (!success) {
+        _offlineQueue?.enqueue('logs', [
+          {
+            'severity_number': logRecord.severityNumber,
+            'severity_text': logRecord.severityText,
+            'body': logRecord.body,
+            'timestamp_nanos': logRecord.timestampNanos.toString(),
+            ...?logRecord.attributes,
+          },
+        ]);
+      }
+    });
   }
 
   static Future<void> _flushOfflineQueue() async {
     if (_offlineQueue == null) return;
     final batches = await _offlineQueue!.dequeueAll();
-    // Re-export queued batches. On failure, don't re-queue (avoid infinite loops).
-    for (final _ in batches) {
+    for (final batch in batches) {
       try {
-        // For now, just attempt to re-export. Future: per-signal routing.
+        if (batch.signal == 'logs' && _logExporter != null) {
+          final records = batch.events
+              .map((e) => ScoutLogRecord(
+                    severityNumber: e['severity_number'] as int? ?? 9,
+                    severityText: e['severity_text'] as String? ?? 'INFO',
+                    body: e['body'] as String? ?? '',
+                    timestampNanos: BigInt.parse(
+                        e['timestamp_nanos'] as String? ?? '0'),
+                    attributes: Map<String, Object>.from(
+                      Map<String, dynamic>.from(e)
+                        ..removeWhere((k, _) => const {
+                              'severity_number',
+                              'severity_text',
+                              'body',
+                              'timestamp_nanos',
+                            }.contains(k)),
+                    ),
+                  ))
+              .toList();
+          await _logExporter!.export(records);
+        }
       } catch (_) {
-        // Silently drop failed re-exports
+        // Drop failed re-exports to avoid infinite loops
       }
     }
   }
@@ -748,5 +807,9 @@ class ScoutFlutter {
     _offlineFlushTimer?.cancel();
     _offlineFlushTimer = null;
     _dioInterceptor = null;
+    if (_originalDebugPrint != null) {
+      debugPrint = _originalDebugPrint!;
+      _originalDebugPrint = null;
+    }
   }
 }
