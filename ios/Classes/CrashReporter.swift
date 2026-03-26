@@ -38,9 +38,10 @@ class CrashReporter {
         var reports: [[String: Any]] = []
 
         for reportId in reportIds {
-            guard let report = store.report(for: reportId.int64Value) as? [String: Any] else {
+            guard let reportDict = store.report(for: reportId.int64Value) as? CrashReportDictionary else {
                 continue
             }
+            let report = reportDict.value as [String: Any]
 
             var parsed: [String: Any] = [:]
 
