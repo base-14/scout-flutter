@@ -55,6 +55,10 @@ class ScoutFlutterConfig {
   /// Whether to track network connectivity type as a resource attribute.
   final bool enableConnectivityTracking;
 
+  /// OTLP headers sent with every export request (traces and metrics).
+  /// Use this for authentication tokens, API keys, etc.
+  final Map<String, String>? headers;
+
   const ScoutFlutterConfig({
     required this.serviceName,
     required this.endpoint,
@@ -73,6 +77,7 @@ class ScoutFlutterConfig {
     int anrThresholdMs = 5000,
     this.enableStartupTracking = true,
     this.enableConnectivityTracking = true,
+    this.headers,
   }) : longTaskThresholdMs = longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs;
 }

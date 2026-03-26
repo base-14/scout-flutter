@@ -143,7 +143,10 @@ class ScoutFlutter {
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
     final spanExporter = OtlpHttpSpanExporter(
-      OtlpHttpExporterConfig(endpoint: httpEndpoint),
+      OtlpHttpExporterConfig(
+        endpoint: httpEndpoint,
+        headers: config.headers,
+      ),
     );
 
     await FlutterOTel.initialize(
@@ -158,7 +161,10 @@ class ScoutFlutter {
       // in dartastic_opentelemetry's OtlpHttpMetricExporter.
       // See: https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/1
       metricExporter: config.enablePerformanceMetrics
-          ? FixedHttpMetricExporter(endpoint: httpEndpoint)
+          ? FixedHttpMetricExporter(
+              endpoint: httpEndpoint,
+              headers: config.headers,
+            )
           : null,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
