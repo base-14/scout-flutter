@@ -713,11 +713,30 @@ class ScoutFlutter {
     return attrs;
   }
 
-  static FlutterExceptionHandler? _scoutErrorHandler;
+  static FlutterExceptionHandler? _wrappedFlutterErrorHandler;
+  static ErrorCallback? _wrappedPlatformErrorHandler;
 
   static void _setupErrorHandlers() {
-    // Create Scout's error handler that emits error spans.
-    _scoutErrorHandler = (FlutterErrorDetails details) {
+    _wrapFlutterErrorHandler();
+    _wrapPlatformErrorHandler();
+
+    // Re-wrap once after the first frame. This catches overwrites from
+    // widget initState() and service initialize() calls that run after
+    // Scout but before the first frame renders. Zero ongoing cost.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wrapFlutterErrorHandler();
+      _wrapPlatformErrorHandler();
+    });
+  }
+
+  /// Wraps [FlutterError.onError] so Scout's telemetry runs before the
+  /// app's handler. Skips if already wrapped.
+  static void _wrapFlutterErrorHandler() {
+    final current = FlutterError.onError;
+    if (current == null || current == _wrappedFlutterErrorHandler) return;
+
+    final appHandler = current;
+    _wrappedFlutterErrorHandler = (FlutterErrorDetails details) {
       try {
         _recordAndPersistBreadcrumb(
           'error',
@@ -732,21 +751,19 @@ class ScoutFlutter {
           ..._commonAttributes(),
         });
       } catch (_) {}
+      appHandler(details);
     };
+    FlutterError.onError = _wrappedFlutterErrorHandler;
+  }
 
-    // Wrap the current handler — Scout runs first, then delegates.
-    _wrapErrorHandler();
+  /// Wraps [PlatformDispatcher.instance.onError] so Scout's telemetry runs
+  /// before the app's handler. Skips if already wrapped.
+  static void _wrapPlatformErrorHandler() {
+    final current = PlatformDispatcher.instance.onError;
+    if (current == _wrappedPlatformErrorHandler) return;
 
-    // Re-wrap periodically. Apps and widgets commonly overwrite
-    // FlutterError.onError after initialization (e.g. ErrorBoundary,
-    // ErrorHandlerService). This ensures Scout always intercepts errors
-    // regardless of overwrite order.
-    Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_config == null) return; // SDK shut down
-      _wrapErrorHandler();
-    });
-
-    PlatformDispatcher.instance.onError = (error, stack) {
+    final appHandler = current;
+    _wrappedPlatformErrorHandler = (Object error, StackTrace stack) {
       try {
         _recordAndPersistBreadcrumb(
           'error',
@@ -760,27 +777,11 @@ class ScoutFlutter {
           ..._commonAttributes(),
         });
       } catch (_) {}
+      if (appHandler != null) return appHandler(error, stack);
       return true;
     };
+    PlatformDispatcher.instance.onError = _wrappedPlatformErrorHandler;
   }
-
-  /// Wraps the current [FlutterError.onError] so Scout's telemetry runs
-  /// before the app's handler. Skips if already wrapped.
-  static void _wrapErrorHandler() {
-    final current = FlutterError.onError;
-    if (current == null) return;
-    // Already wrapped — the current handler is our wrapper.
-    if (current == _wrappedErrorHandler) return;
-
-    final appHandler = current;
-    _wrappedErrorHandler = (FlutterErrorDetails details) {
-      _scoutErrorHandler?.call(details);
-      appHandler(details);
-    };
-    FlutterError.onError = _wrappedErrorHandler;
-  }
-
-  static FlutterExceptionHandler? _wrappedErrorHandler;
 
   /// Get breadcrumbs JSON safely — never throws.
   static String _safeBreadcrumbsJson() {
