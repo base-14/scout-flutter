@@ -705,25 +705,12 @@ class ScoutFlutter {
   }
 
   static void _setupErrorHandlers() {
-    FlutterError.onError = (details) {
-      try {
-        FlutterError.presentError(details);
-        _recordAndPersistBreadcrumb(
-          'error',
-          'flutter_error: ${details.exceptionAsString()}',
-        );
-        _emitSpan('error', {
-          'error.type': 'flutter_error',
-          'error.message': details.exceptionAsString(),
-          if (details.stack != null)
-            'error.stack_trace': details.stack.toString(),
-          'breadcrumbs': _safeBreadcrumbsJson(),
-          ..._commonAttributes(),
-        });
-      } catch (_) {
-        // Never crash the app due to telemetry failure.
-      }
-    };
+    // Wrap FlutterError.onError with a proxy that intercepts ALL errors,
+    // even when the app or widgets override FlutterError.onError after us.
+    // The proxy always runs Scout's telemetry, then forwards to whatever
+    // handler is currently set.
+    final originalHandler = FlutterError.onError ?? FlutterError.presentError;
+    FlutterError.onError = _ScoutErrorProxy(originalHandler).call;
 
     PlatformDispatcher.instance.onError = (error, stack) {
       try {
@@ -738,9 +725,7 @@ class ScoutFlutter {
           'breadcrumbs': _safeBreadcrumbsJson(),
           ..._commonAttributes(),
         });
-      } catch (_) {
-        // Never crash the app due to telemetry failure.
-      }
+      } catch (_) {}
       return true;
     };
   }
@@ -1022,5 +1007,37 @@ class ScoutFlutter {
     _activeTraceId = null;
     _activeSpanId = null;
     _crashDetector = null;
+  }
+}
+
+/// A callable class that wraps [FlutterError.onError] so Scout's telemetry
+/// survives even when the app overwrites the handler after initialization.
+///
+/// When the app does `FlutterError.onError = myHandler`, it reads the current
+/// value first (this proxy) and typically stores it as `_previousHandler`.
+/// Later, when the app chains via `_previousHandler?.call(details)`, Scout's
+/// telemetry still runs because the proxy's [call] fires Scout's logic and
+/// then delegates to the original handler.
+class _ScoutErrorProxy {
+  _ScoutErrorProxy(this._originalHandler);
+
+  final FlutterExceptionHandler _originalHandler;
+
+  void call(FlutterErrorDetails details) {
+    try {
+      ScoutFlutter._recordAndPersistBreadcrumb(
+        'error',
+        'flutter_error: ${details.exception.runtimeType}',
+      );
+      ScoutFlutter._emitSpan('error', {
+        'error.type': 'flutter_error',
+        'error.message': details.exception.toString(),
+        'error.stack_trace': details.stack?.toString() ?? '',
+        'error.library': details.library ?? '',
+        'breadcrumbs': ScoutFlutter._safeBreadcrumbsJson(),
+        ...ScoutFlutter._commonAttributes(),
+      });
+    } catch (_) {}
+    _originalHandler(details);
   }
 }
