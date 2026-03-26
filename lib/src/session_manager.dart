@@ -28,11 +28,11 @@ class SessionManager {
     required double sampleRate,
     this.timeoutMinutes = 30,
     DateTime Function()? clock,
-  })  : assert(sampleRate >= 0.0 && sampleRate <= 100.0),
-        sampleRate = sampleRate.clamp(0.0, 100.0),
-        _clock = clock ?? DateTime.now,
-        _sessionId = '',
-        _isSampled = false {
+  }) : assert(sampleRate >= 0.0 && sampleRate <= 100.0),
+       sampleRate = sampleRate.clamp(0.0, 100.0),
+       _clock = clock ?? DateTime.now,
+       _sessionId = '',
+       _isSampled = false {
     _sessionId = _generateUuidV4();
     _isSampled = _rollSampling();
   }

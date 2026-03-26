@@ -49,23 +49,25 @@ void main() {
       expect(detected.first.inMilliseconds, greaterThan(50));
     });
 
-    test('does NOT report when event loop is not blocked beyond threshold',
-        () async {
-      final detected = <Duration>[];
-      final detector = LongTaskDetector(
-        threshold: const Duration(milliseconds: 200),
-        onLongTask: (d) => detected.add(d),
-      );
+    test(
+      'does NOT report when event loop is not blocked beyond threshold',
+      () async {
+        final detected = <Duration>[];
+        final detector = LongTaskDetector(
+          threshold: const Duration(milliseconds: 200),
+          onLongTask: (d) => detected.add(d),
+        );
 
-      detector.start();
+        detector.start();
 
-      // Let several polling iterations pass without blocking.
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Let several polling iterations pass without blocking.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
 
-      await detector.stop();
+        await detector.stop();
 
-      expect(detected, isEmpty);
-    });
+        expect(detected, isEmpty);
+      },
+    );
 
     test('can be stopped and no further detections occur', () async {
       final detected = <Duration>[];

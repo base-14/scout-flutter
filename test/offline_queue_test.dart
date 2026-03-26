@@ -20,7 +20,7 @@ void main() {
   group('OfflineQueue', () {
     test('enqueue writes a file', () async {
       await queue.enqueue('spans', [
-        {'type': 'span', 'name': 'test_span'}
+        {'type': 'span', 'name': 'test_span'},
       ]);
       final files = tempDir.listSync().whereType<File>().toList();
       expect(files, hasLength(1));
@@ -29,10 +29,10 @@ void main() {
 
     test('dequeueAll reads and deletes files', () async {
       await queue.enqueue('spans', [
-        {'name': 'span1'}
+        {'name': 'span1'},
       ]);
       await queue.enqueue('metrics', [
-        {'name': 'metric1'}
+        {'name': 'metric1'},
       ]);
       final batches = await queue.dequeueAll();
       expect(batches, hasLength(2));
@@ -41,16 +41,18 @@ void main() {
     });
 
     test('enforces storage cap by deleting oldest files', () async {
-      final largeBatch =
-          List.generate(5000, (i) => {'key': 'value_$i', 'data': 'x' * 200});
+      final largeBatch = List.generate(
+        5000,
+        (i) => {'key': 'value_$i', 'data': 'x' * 200},
+      );
       await queue.enqueue('spans', largeBatch);
       await queue.enqueue('spans', largeBatch);
       await queue.enqueue('spans', largeBatch);
       await queue.enforceStorageCap();
-      final totalSize = tempDir
-          .listSync()
-          .whereType<File>()
-          .fold<int>(0, (sum, f) => sum + f.lengthSync());
+      final totalSize = tempDir.listSync().whereType<File>().fold<int>(
+        0,
+        (sum, f) => sum + f.lengthSync(),
+      );
       expect(totalSize, lessThanOrEqualTo(1 * 1024 * 1024));
     });
 
@@ -61,7 +63,7 @@ void main() {
 
     test('batch roundtrip preserves data', () async {
       final original = [
-        {'type': 'span', 'name': 'test', 'value': 42}
+        {'type': 'span', 'name': 'test', 'value': 42},
       ];
       await queue.enqueue('spans', original);
       final batches = await queue.dequeueAll();

@@ -30,15 +30,17 @@ class ScoutLogger {
   final void Function(ScoutLogEntry entry) _onLog;
 
   ScoutLogger({required void Function(ScoutLogEntry entry) onLog})
-      : _onLog = onLog;
+    : _onLog = onLog;
 
   void log(LogLevel level, String message, {Map<String, Object>? attributes}) {
-    _onLog(ScoutLogEntry(
-      level: level,
-      message: message,
-      timestamp: DateTime.now(),
-      attributes: attributes,
-    ));
+    _onLog(
+      ScoutLogEntry(
+        level: level,
+        message: message,
+        timestamp: DateTime.now(),
+        attributes: attributes,
+      ),
+    );
   }
 
   void logDebug(String message, {Map<String, Object>? attributes}) =>

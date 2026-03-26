@@ -11,8 +11,7 @@ import 'package:dartastic_opentelemetry/src/metrics/export/otlp/metric_transform
 import 'package:dartastic_opentelemetry/proto/collector/logs/v1/logs_service.pb.dart';
 import 'package:dartastic_opentelemetry/proto/common/v1/common.pb.dart'
     as common_pb;
-import 'package:dartastic_opentelemetry/proto/logs/v1/logs.pb.dart'
-    as logs_pb;
+import 'package:dartastic_opentelemetry/proto/logs/v1/logs.pb.dart' as logs_pb;
 import 'package:dartastic_opentelemetry/proto/logs/v1/logs.pbenum.dart'
     as logs_enum;
 import 'package:fixnum/fixnum.dart';
@@ -59,13 +58,14 @@ class FixedHttpLogExporter {
     Duration timeout = const Duration(seconds: 10),
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 200),
-  })  : _endpoint = endpoint.endsWith('/v1/logs')
-            ? endpoint
-            : '${endpoint.endsWith('/') ? endpoint.substring(0, endpoint.length - 1) : endpoint}/v1/logs',
-        _headers = headers ?? {},
-        _timeout = timeout,
-        _maxRetries = maxRetries,
-        _baseDelay = baseDelay;
+  }) : _endpoint =
+           endpoint.endsWith('/v1/logs')
+               ? endpoint
+               : '${endpoint.endsWith('/') ? endpoint.substring(0, endpoint.length - 1) : endpoint}/v1/logs',
+       _headers = headers ?? {},
+       _timeout = timeout,
+       _maxRetries = maxRetries,
+       _baseDelay = baseDelay;
 
   /// Exports a list of [ScoutLogRecord]s to the configured OTLP endpoint.
   ///
@@ -116,12 +116,12 @@ class FixedHttpLogExporter {
 
       // Timestamp
       logRecord.timeUnixNano = Int64.parseInt(log.timestampNanos.toString());
-      logRecord.observedTimeUnixNano =
-          Int64.parseInt(log.timestampNanos.toString());
+      logRecord.observedTimeUnixNano = Int64.parseInt(
+        log.timestampNanos.toString(),
+      );
 
       // Severity
-      final severityEnum =
-          logs_enum.SeverityNumber.valueOf(log.severityNumber);
+      final severityEnum = logs_enum.SeverityNumber.valueOf(log.severityNumber);
       if (severityEnum != null) {
         logRecord.severityNumber = severityEnum;
       }
@@ -177,7 +177,8 @@ class FixedHttpLogExporter {
     final baseMs = _baseDelay.inMilliseconds;
     final delay = baseMs * pow(2, attempt);
     return Duration(
-        milliseconds: (delay + _random.nextDouble() * delay).toInt());
+      milliseconds: (delay + _random.nextDouble() * delay).toInt(),
+    );
   }
 
   static const _retryableStatusCodes = [429, 503];

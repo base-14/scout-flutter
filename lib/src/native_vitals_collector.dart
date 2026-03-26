@@ -53,7 +53,8 @@ class NativeVitalsCollector {
       else if (cpu.containsKey('ticks')) {
         final ticks = cpu['ticks'] as int;
         if (ticks >= 0 && _lastCpuTicks != null && _lastCpuTime != null) {
-          final elapsed = DateTime.now().difference(_lastCpuTime!).inMilliseconds;
+          final elapsed =
+              DateTime.now().difference(_lastCpuTime!).inMilliseconds;
           if (elapsed > 0) {
             final tickDelta = ticks - _lastCpuTicks!;
             final cpuMs = tickDelta * 10;

@@ -10,8 +10,10 @@ import 'dart:typed_data';
 import 'package:dartastic_opentelemetry/dartastic_opentelemetry.dart';
 import 'package:dartastic_opentelemetry/src/metrics/export/otlp/metric_transformer.dart';
 import 'package:dartastic_opentelemetry/proto/collector/metrics/v1/metrics_service.pb.dart';
-import 'package:dartastic_opentelemetry/proto/common/v1/common.pb.dart' as common_pb;
-import 'package:dartastic_opentelemetry/proto/metrics/v1/metrics.pb.dart' as metrics_pb;
+import 'package:dartastic_opentelemetry/proto/common/v1/common.pb.dart'
+    as common_pb;
+import 'package:dartastic_opentelemetry/proto/metrics/v1/metrics.pb.dart'
+    as metrics_pb;
 import 'package:http/http.dart' as http;
 
 /// A fixed version of OtlpHttpMetricExporter that correctly creates
@@ -34,13 +36,14 @@ class FixedHttpMetricExporter implements MetricExporter {
     Duration timeout = const Duration(seconds: 10),
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 200),
-  })  : _endpoint = endpoint.endsWith('/v1/metrics')
-            ? endpoint
-            : '${endpoint.endsWith('/') ? endpoint.substring(0, endpoint.length - 1) : endpoint}/v1/metrics',
-        _headers = headers ?? {},
-        _timeout = timeout,
-        _maxRetries = maxRetries,
-        _baseDelay = baseDelay;
+  }) : _endpoint =
+           endpoint.endsWith('/v1/metrics')
+               ? endpoint
+               : '${endpoint.endsWith('/') ? endpoint.substring(0, endpoint.length - 1) : endpoint}/v1/metrics',
+       _headers = headers ?? {},
+       _timeout = timeout,
+       _maxRetries = maxRetries,
+       _baseDelay = baseDelay;
 
   @override
   Future<bool> export(MetricData data) async {
@@ -75,8 +78,7 @@ class FixedHttpMetricExporter implements MetricExporter {
     // so MetricData.resource is always null.
     final resource = metrics.resource ?? OTel.defaultResource;
     if (resource != null) {
-      resourceMetrics.resource =
-          MetricTransformer.transformResource(resource);
+      resourceMetrics.resource = MetricTransformer.transformResource(resource);
     }
 
     final scopeMetrics = metrics_pb.ScopeMetrics();
@@ -118,7 +120,9 @@ class FixedHttpMetricExporter implements MetricExporter {
   Duration _jitteredDelay(int attempt) {
     final baseMs = _baseDelay.inMilliseconds;
     final delay = baseMs * pow(2, attempt);
-    return Duration(milliseconds: (delay + _random.nextDouble() * delay).toInt());
+    return Duration(
+      milliseconds: (delay + _random.nextDouble() * delay).toInt(),
+    );
   }
 
   static const _retryableStatusCodes = [429, 503];

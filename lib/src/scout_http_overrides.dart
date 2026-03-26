@@ -41,7 +41,8 @@ class ScoutHttpOverrides extends HttpOverrides {
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
-    final inner = existingOverrides?.createHttpClient(context) ??
+    final inner =
+        existingOverrides?.createHttpClient(context) ??
         super.createHttpClient(context);
     return ScoutTrackingHttpClient(
       inner: inner,

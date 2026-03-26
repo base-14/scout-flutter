@@ -21,8 +21,8 @@ typedef CustomGestureElementDetector =
 /// Callback to filter/modify events before export.
 /// Return the event map to send, or null to drop it.
 /// The map includes a 'type' field: "span", "metric", or "log".
-typedef BeforeSendCallback = Map<String, dynamic>? Function(
-    Map<String, dynamic> event);
+typedef BeforeSendCallback =
+    Map<String, dynamic>? Function(Map<String, dynamic> event);
 
 /// Configuration for Scout Flutter RUM.
 @immutable
@@ -120,9 +120,11 @@ class ScoutFlutterConfig {
     this.capturePrintStatements = false,
     this.maxOfflineStorageMb = 5,
     this.beforeSend,
-  }) : longTaskThresholdMs = longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
+  }) : longTaskThresholdMs =
+           longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,
-       sessionSampleRate = sessionSampleRate < 0.0
-           ? 0.0
-           : (sessionSampleRate > 100.0 ? 100.0 : sessionSampleRate);
+       sessionSampleRate =
+           sessionSampleRate < 0.0
+               ? 0.0
+               : (sessionSampleRate > 100.0 ? 100.0 : sessionSampleRate);
 }

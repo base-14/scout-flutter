@@ -14,8 +14,7 @@ class OfflineQueue {
   OfflineQueue({required this.directory, required this.maxStorageMb});
 
   /// Write a batch of events to a timestamped file.
-  Future<void> enqueue(
-      String signal, List<Map<String, dynamic>> events) async {
+  Future<void> enqueue(String signal, List<Map<String, dynamic>> events) async {
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
@@ -29,12 +28,13 @@ class OfflineQueue {
   /// Read all queued batches, delete the files, return the data.
   Future<List<OfflineBatch>> dequeueAll() async {
     if (!directory.existsSync()) return [];
-    final files = directory
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.jsonl'))
-        .toList()
-      ..sort((a, b) => a.path.compareTo(b.path)); // oldest first
+    final files =
+        directory
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.jsonl'))
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path)); // oldest first
 
     final batches = <OfflineBatch>[];
     for (final file in files) {
@@ -60,12 +60,13 @@ class OfflineQueue {
   Future<void> enforceStorageCap() async {
     if (!directory.existsSync()) return;
     final maxBytes = maxStorageMb * 1024 * 1024;
-    final files = directory
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.jsonl'))
-        .toList()
-      ..sort((a, b) => a.path.compareTo(b.path)); // oldest first
+    final files =
+        directory
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.jsonl'))
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path)); // oldest first
 
     var totalSize = files.fold<int>(0, (sum, f) => sum + f.lengthSync());
     var i = 0;

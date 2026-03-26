@@ -48,8 +48,7 @@ class ScoutTrackingHttpClient implements HttpClient {
   @override
   int? get maxConnectionsPerHost => inner.maxConnectionsPerHost;
   @override
-  set maxConnectionsPerHost(int? value) =>
-      inner.maxConnectionsPerHost = value;
+  set maxConnectionsPerHost(int? value) => inner.maxConnectionsPerHost = value;
 
   @override
   bool get autoUncompress => inner.autoUncompress;
@@ -70,12 +69,8 @@ class ScoutTrackingHttpClient implements HttpClient {
 
   @override
   set authenticateProxy(
-    Future<bool> Function(
-      String host,
-      int port,
-      String scheme,
-      String? realm,
-    )? f,
+    Future<bool> Function(String host, int port, String scheme, String? realm)?
+    f,
   ) => inner.authenticateProxy = f;
 
   @override
@@ -92,7 +87,8 @@ class ScoutTrackingHttpClient implements HttpClient {
       Uri url,
       String? proxyHost,
       int? proxyPort,
-    )? f,
+    )?
+    f,
   ) => inner.connectionFactory = f;
 
   @override
@@ -264,10 +260,10 @@ class _TrackedHttpClientRequest implements HttpClientRequest {
     required Uri url,
     required Stopwatch stopwatch,
     required void Function(HttpRequestData data) onRequestCompleted,
-  })  : _trackingMethod = method,
-        _trackingUrl = url,
-        _stopwatch = stopwatch,
-        _onRequestCompleted = onRequestCompleted;
+  }) : _trackingMethod = method,
+       _trackingUrl = url,
+       _stopwatch = stopwatch,
+       _onRequestCompleted = onRequestCompleted;
 
   // --- Properties: delegate to inner ---
 
@@ -360,24 +356,28 @@ class _TrackedHttpClientRequest implements HttpClientRequest {
     try {
       final response = await inner.close();
       _stopwatch.stop();
-      _onRequestCompleted(HttpRequestData(
-        method: _trackingMethod,
-        url: _trackingUrl,
-        statusCode: response.statusCode,
-        durationMs: _stopwatch.elapsedMilliseconds,
-        responseSize: response.contentLength < 0 ? 0 : response.contentLength,
-      ));
+      _onRequestCompleted(
+        HttpRequestData(
+          method: _trackingMethod,
+          url: _trackingUrl,
+          statusCode: response.statusCode,
+          durationMs: _stopwatch.elapsedMilliseconds,
+          responseSize: response.contentLength < 0 ? 0 : response.contentLength,
+        ),
+      );
       return response;
     } catch (e) {
       _stopwatch.stop();
-      _onRequestCompleted(HttpRequestData(
-        method: _trackingMethod,
-        url: _trackingUrl,
-        statusCode: 0,
-        durationMs: _stopwatch.elapsedMilliseconds,
-        responseSize: 0,
-        error: e.toString(),
-      ));
+      _onRequestCompleted(
+        HttpRequestData(
+          method: _trackingMethod,
+          url: _trackingUrl,
+          statusCode: 0,
+          durationMs: _stopwatch.elapsedMilliseconds,
+          responseSize: 0,
+          error: e.toString(),
+        ),
+      );
       rethrow;
     }
   }

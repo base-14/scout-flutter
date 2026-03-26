@@ -16,18 +16,20 @@ class ScoutPlatformChannel {
   /// Simulate an ANR by blocking the native main thread.
   /// Only for testing — triggers the ANR watchdog.
   static Future<void> simulateAnr({int durationMs = 6000}) async {
-    await _channel.invokeMethod('simulateAnr', {
-      'durationMs': durationMs,
-    });
+    await _channel.invokeMethod('simulateAnr', {'durationMs': durationMs});
   }
 
   static Future<Map<String, dynamic>> getMemoryUsage() async {
-    final result = await _channel.invokeMapMethod<String, dynamic>('getMemoryUsage');
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'getMemoryUsage',
+    );
     return result ?? {};
   }
 
   static Future<Map<String, dynamic>> getCpuUsage() async {
-    final result = await _channel.invokeMapMethod<String, dynamic>('getCpuUsage');
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'getCpuUsage',
+    );
     return result ?? {};
   }
 

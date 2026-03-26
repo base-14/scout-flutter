@@ -10,14 +10,14 @@ void main() {
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
-      if (call.method == 'getMemoryUsage') {
-        return {'used': 50000000, 'max': 200000000};
-      }
-      if (call.method == 'getCpuUsage') {
-        return {'cpu_percent': 25.5};
-      }
-      return null;
-    });
+          if (call.method == 'getMemoryUsage') {
+            return {'used': 50000000, 'max': 200000000};
+          }
+          if (call.method == 'getCpuUsage') {
+            return {'cpu_percent': 25.5};
+          }
+          return null;
+        });
   });
 
   tearDown(() {
@@ -91,16 +91,16 @@ void main() {
       int callCount = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall call) async {
-        if (call.method == 'getMemoryUsage') {
-          return {'used': 50000000, 'max': 200000000};
-        }
-        if (call.method == 'getCpuUsage') {
-          callCount++;
-          // Simulate increasing ticks (100 tick-ms per interval)
-          return {'ticks': callCount * 100};
-        }
-        return null;
-      });
+            if (call.method == 'getMemoryUsage') {
+              return {'used': 50000000, 'max': 200000000};
+            }
+            if (call.method == 'getCpuUsage') {
+              callCount++;
+              // Simulate increasing ticks (100 tick-ms per interval)
+              return {'ticks': callCount * 100};
+            }
+            return null;
+          });
 
       final cpuData = <double>[];
       final collector = NativeVitalsCollector(
@@ -121,8 +121,8 @@ void main() {
     test('handles platform channel errors gracefully', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall call) async {
-        throw PlatformException(code: 'ERROR', message: 'test error');
-      });
+            throw PlatformException(code: 'ERROR', message: 'test error');
+          });
 
       final collector = NativeVitalsCollector(
         interval: const Duration(milliseconds: 50),
@@ -139,14 +139,14 @@ void main() {
     test('skips memory callback when used is <= 0', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall call) async {
-        if (call.method == 'getMemoryUsage') {
-          return {'used': -1, 'max': -1};
-        }
-        if (call.method == 'getCpuUsage') {
-          return {'cpu_percent': 10.0};
-        }
-        return null;
-      });
+            if (call.method == 'getMemoryUsage') {
+              return {'used': -1, 'max': -1};
+            }
+            if (call.method == 'getCpuUsage') {
+              return {'cpu_percent': 10.0};
+            }
+            return null;
+          });
 
       final memoryData = <List<int>>[];
       final collector = NativeVitalsCollector(

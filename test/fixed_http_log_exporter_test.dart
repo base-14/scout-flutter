@@ -22,7 +22,8 @@ void main() {
           severityNumber: 9,
           severityText: 'INFO',
           body: 'test message',
-          timestampNanos: BigInt.from(DateTime.now().microsecondsSinceEpoch) *
+          timestampNanos:
+              BigInt.from(DateTime.now().microsecondsSinceEpoch) *
               BigInt.from(1000),
         ),
       ]);

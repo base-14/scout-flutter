@@ -12,15 +12,15 @@ void main() {
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
-      calls.add(call);
-      if (call.method == 'getMemoryUsage') {
-        return {'used': 100000, 'max': 500000};
-      }
-      if (call.method == 'getCpuUsage') {
-        return {'cpu_percent': 42.0};
-      }
-      return null;
-    });
+          calls.add(call);
+          if (call.method == 'getMemoryUsage') {
+            return {'used': 100000, 'max': 500000};
+          }
+          if (call.method == 'getCpuUsage') {
+            return {'cpu_percent': 42.0};
+          }
+          return null;
+        });
   });
 
   tearDown(() {
@@ -67,8 +67,8 @@ void main() {
     test('getMemoryUsage returns empty map on null response', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall call) async {
-        return null;
-      });
+            return null;
+          });
 
       final result = await ScoutPlatformChannel.getMemoryUsage();
       expect(result, isEmpty);
@@ -83,8 +83,8 @@ void main() {
     test('getCpuUsage returns empty map on null response', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall call) async {
-        return null;
-      });
+            return null;
+          });
 
       final result = await ScoutPlatformChannel.getCpuUsage();
       expect(result, isEmpty);

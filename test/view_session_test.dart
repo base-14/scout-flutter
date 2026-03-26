@@ -23,10 +23,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
-          navigatorObservers: [observer],
-          home: const _TestPageA(),
-        ),
+        MaterialApp(navigatorObservers: [observer], home: const _TestPageA()),
       );
       await tester.pumpAndSettle();
 
@@ -56,9 +53,7 @@ void main() {
         MaterialApp(
           navigatorObservers: [observer],
           initialRoute: '/',
-          routes: {
-            '/': (_) => const _TestPageA(),
-          },
+          routes: {'/': (_) => const _TestPageA()},
         ),
       );
       await tester.pumpAndSettle();
@@ -95,9 +90,7 @@ void main() {
         MaterialApp(
           navigatorObservers: [observer],
           initialRoute: '/',
-          routes: {
-            '/': (_) => const _TestPageA(),
-          },
+          routes: {'/': (_) => const _TestPageA()},
         ),
       );
       await tester.pumpAndSettle();
@@ -134,9 +127,7 @@ void main() {
         MaterialApp(
           navigatorObservers: [observer],
           initialRoute: '/',
-          routes: {
-            '/': (_) => const _TestPageA(),
-          },
+          routes: {'/': (_) => const _TestPageA()},
         ),
       );
       await tester.pumpAndSettle();

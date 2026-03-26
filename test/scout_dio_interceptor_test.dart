@@ -23,13 +23,17 @@ void main() {
         firstPartyHosts: ['api.example.com'],
         onRequestCompleted: (data) {},
       );
-      final options =
-          RequestOptions(baseUrl: 'https://api.example.com', path: '/test');
+      final options = RequestOptions(
+        baseUrl: 'https://api.example.com',
+        path: '/test',
+      );
       final handler = _MockRequestHandler();
       interceptor.onRequest(options, handler);
       expect(options.headers['traceparent'], isNotNull);
-      expect(options.headers['traceparent'],
-          matches(RegExp(r'^00-[0-9a-f]{32}-[0-9a-f]{16}-01$')));
+      expect(
+        options.headers['traceparent'],
+        matches(RegExp(r'^00-[0-9a-f]{32}-[0-9a-f]{16}-01$')),
+      );
     });
 
     test('does not inject traceparent for non-first-party hosts', () {
@@ -37,8 +41,10 @@ void main() {
         firstPartyHosts: ['api.example.com'],
         onRequestCompleted: (data) {},
       );
-      final options =
-          RequestOptions(baseUrl: 'https://other.com', path: '/test');
+      final options = RequestOptions(
+        baseUrl: 'https://other.com',
+        path: '/test',
+      );
       final handler = _MockRequestHandler();
       interceptor.onRequest(options, handler);
       expect(options.headers.containsKey('traceparent'), isFalse);

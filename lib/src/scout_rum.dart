@@ -7,8 +7,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:dartastic_opentelemetry/dartastic_opentelemetry.dart'
-    show OtlpHttpSpanExporter, OtlpHttpExporterConfig, SimpleSpanProcessor;
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -146,8 +144,7 @@ class ScoutFlutter {
     WidgetsFlutterBinding.ensureInitialized();
 
     final resourceAttrs = <String, Object>{
-      if (config.environment != null)
-        'environment': config.environment!,
+      if (config.environment != null) 'environment': config.environment!,
       ...?config.resourceAttributes,
       ...await _collectDeviceAttributes(),
     };
@@ -162,10 +159,7 @@ class ScoutFlutter {
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
     final spanExporter = OtlpHttpSpanExporter(
-      OtlpHttpExporterConfig(
-        endpoint: httpEndpoint,
-        headers: config.headers,
-      ),
+      OtlpHttpExporterConfig(endpoint: httpEndpoint, headers: config.headers),
     );
 
     await FlutterOTel.initialize(
@@ -175,16 +169,17 @@ class ScoutFlutter {
       endpoint: httpEndpoint,
       secure: config.secure,
       enableMetrics: config.enablePerformanceMetrics,
-      spanProcessor: SimpleSpanProcessor(spanExporter),
+      spanProcessor: BatchSpanProcessor(spanExporter),
       // Use our fixed exporter to work around the frozen protobuf bug
       // in dartastic_opentelemetry's OtlpHttpMetricExporter.
       // See: https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/1
-      metricExporter: config.enablePerformanceMetrics
-          ? FixedHttpMetricExporter(
-              endpoint: httpEndpoint,
-              headers: config.headers,
-            )
-          : null,
+      metricExporter:
+          config.enablePerformanceMetrics
+              ? FixedHttpMetricExporter(
+                endpoint: httpEndpoint,
+                headers: config.headers,
+              )
+              : null,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
     );
@@ -222,8 +217,9 @@ class ScoutFlutter {
     }
 
     if (config.enableConnectivityTracking) {
-      _connectivitySubscription =
-          Connectivity().onConnectivityChanged.listen((result) {
+      _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+        result,
+      ) {
         if (result.isNotEmpty) {
           _connectivityType = result.first.name;
         }
@@ -298,11 +294,7 @@ class ScoutFlutter {
     Map<String, Object> attributes,
   ) {
     if (_config?.beforeSend == null) return attributes;
-    final event = <String, dynamic>{
-      'type': type,
-      'name': name,
-      ...attributes,
-    };
+    final event = <String, dynamic>{'type': type, 'name': name, ...attributes};
     final result = _config!.beforeSend!(event);
     if (result == null) return null;
     final filtered = <String, Object>{};
@@ -462,17 +454,15 @@ class ScoutFlutter {
     _frameMetricsCollector = FrameMetricsCollector(
       onFrameTiming: (buildTime, rasterTime) {
         if (!(_sessionManager?.isSampled ?? true)) return;
-        final screenAttr = <String, Object>{
-          if (_navObserver?.currentScreenName != null)
-            'screen.name': _navObserver!.currentScreenName!,
-          if (_sessionManager != null)
-            'session.id': _sessionManager!.sessionId,
-        }.toAttributes();
+        final screenAttr =
+            <String, Object>{
+              if (_navObserver?.currentScreenName != null)
+                'screen.name': _navObserver!.currentScreenName!,
+              if (_sessionManager != null)
+                'session.id': _sessionManager!.sessionId,
+            }.toAttributes();
 
-        buildHistogram.record(
-          buildTime.inMicroseconds / 1000000.0,
-          screenAttr,
-        );
+        buildHistogram.record(buildTime.inMicroseconds / 1000000.0, screenAttr);
         rasterHistogram.record(
           rasterTime.inMicroseconds / 1000000.0,
           screenAttr,
@@ -519,22 +509,24 @@ class ScoutFlutter {
     _nativeVitalsCollector = NativeVitalsCollector(
       onMemory: (usedBytes, maxBytes) {
         if (!(_sessionManager?.isSampled ?? true)) return;
-        final attrs = <String, Object>{
-          if (_navObserver?.currentScreenName != null)
-            'screen.name': _navObserver!.currentScreenName!,
-          if (_sessionManager != null)
-            'session.id': _sessionManager!.sessionId,
-        }.toAttributes();
+        final attrs =
+            <String, Object>{
+              if (_navObserver?.currentScreenName != null)
+                'screen.name': _navObserver!.currentScreenName!,
+              if (_sessionManager != null)
+                'session.id': _sessionManager!.sessionId,
+            }.toAttributes();
         memoryGauge.record(usedBytes.toDouble(), attrs);
       },
       onCpu: (cpuPercent) {
         if (!(_sessionManager?.isSampled ?? true)) return;
-        final attrs = <String, Object>{
-          if (_navObserver?.currentScreenName != null)
-            'screen.name': _navObserver!.currentScreenName!,
-          if (_sessionManager != null)
-            'session.id': _sessionManager!.sessionId,
-        }.toAttributes();
+        final attrs =
+            <String, Object>{
+              if (_navObserver?.currentScreenName != null)
+                'screen.name': _navObserver!.currentScreenName!,
+              if (_sessionManager != null)
+                'session.id': _sessionManager!.sessionId,
+            }.toAttributes();
         cpuGauge.record(cpuPercent, attrs);
       },
     );
@@ -664,16 +656,16 @@ class ScoutFlutter {
 
   /// Log a custom business event as a span.
   static void logEvent(String name, {Map<String, dynamic>? attributes}) {
-    final attrMap = <String, Object>{
-      ..._commonAttributes(),
-      ...?attributes,
-    };
+    final attrMap = <String, Object>{..._commonAttributes(), ...?attributes};
     _emitSpan(name, attrMap);
   }
 
   /// Log a structured message.
-  static void log(scout_log.LogLevel level, String message,
-      {Map<String, Object>? attributes}) {
+  static void log(
+    scout_log.LogLevel level,
+    String message, {
+    Map<String, Object>? attributes,
+  }) {
     _logger?.log(level, message, attributes: attributes);
   }
 
@@ -748,61 +740,70 @@ class ScoutFlutter {
       severityNumber: entry.level.severityNumber,
       severityText: entry.level.severityText,
       body: body,
-      timestampNanos: BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
+      timestampNanos:
+          BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
           BigInt.from(1000),
       attributes: logAttrs,
       traceId: _activeTraceId,
       spanId: _activeSpanId,
     );
-    _logExporter?.export([logRecord]).then((success) {
-      if (!success) {
-        _offlineQueue?.enqueue('logs', [
-          {
-            'severity_number': logRecord.severityNumber,
-            'severity_text': logRecord.severityText,
-            'body': logRecord.body,
-            'timestamp_nanos': logRecord.timestampNanos.toString(),
-            ...?logRecord.attributes,
-          },
-        ]);
-      }
-    }).catchError((_) {
-      // Silently handle export errors
-    });
+    _logExporter
+        ?.export([logRecord])
+        .then((success) {
+          if (!success) {
+            _offlineQueue?.enqueue('logs', [
+              {
+                'severity_number': logRecord.severityNumber,
+                'severity_text': logRecord.severityText,
+                'body': logRecord.body,
+                'timestamp_nanos': logRecord.timestampNanos.toString(),
+                ...?logRecord.attributes,
+              },
+            ]);
+          }
+        })
+        .catchError((_) {
+          // Silently handle export errors
+        });
   }
 
   static Future<void> _flushOfflineQueue() async {
     if (_flushing || _offlineQueue == null) return;
     _flushing = true;
     try {
-    final batches = await _offlineQueue!.dequeueAll();
-    for (final batch in batches) {
-      try {
-        if (batch.signal == 'logs' && _logExporter != null) {
-          final records = batch.events
-              .map((e) => ScoutLogRecord(
-                    severityNumber: e['severity_number'] as int? ?? 9,
-                    severityText: e['severity_text'] as String? ?? 'INFO',
-                    body: e['body'] as String? ?? '',
-                    timestampNanos: BigInt.parse(
-                        e['timestamp_nanos'] as String? ?? '0'),
-                    attributes: Map<String, Object>.from(
-                      Map<String, dynamic>.from(e)
-                        ..removeWhere((k, _) => const {
+      final batches = await _offlineQueue!.dequeueAll();
+      for (final batch in batches) {
+        try {
+          if (batch.signal == 'logs' && _logExporter != null) {
+            final records =
+                batch.events
+                    .map(
+                      (e) => ScoutLogRecord(
+                        severityNumber: e['severity_number'] as int? ?? 9,
+                        severityText: e['severity_text'] as String? ?? 'INFO',
+                        body: e['body'] as String? ?? '',
+                        timestampNanos: BigInt.parse(
+                          e['timestamp_nanos'] as String? ?? '0',
+                        ),
+                        attributes: Map<String, Object>.from(
+                          Map<String, dynamic>.from(e)..removeWhere(
+                            (k, _) => const {
                               'severity_number',
                               'severity_text',
                               'body',
                               'timestamp_nanos',
-                            }.contains(k)),
-                    ),
-                  ))
-              .toList();
-          await _logExporter!.export(records);
+                            }.contains(k),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList();
+            await _logExporter!.export(records);
+          }
+        } catch (_) {
+          // Drop failed re-exports to avoid infinite loops
         }
-      } catch (_) {
-        // Drop failed re-exports to avoid infinite loops
       }
-    }
     } finally {
       _flushing = false;
     }

@@ -42,25 +42,34 @@ class ScoutDioInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    _report(err.requestOptions,
-        statusCode: err.response?.statusCode ?? 0, error: err.message);
+    _report(
+      err.requestOptions,
+      statusCode: err.response?.statusCode ?? 0,
+      error: err.message,
+    );
     handler.next(err);
   }
 
-  void _report(RequestOptions options,
-      {required int statusCode, String? error}) {
+  void _report(
+    RequestOptions options, {
+    required int statusCode,
+    String? error,
+  }) {
     final startTime = options.extra[_kStartTimeKey] as int?;
-    final durationMs = startTime != null
-        ? DateTime.now().millisecondsSinceEpoch - startTime
-        : 0;
-    onRequestCompleted(HttpRequestData(
-      method: options.method,
-      url: options.uri,
-      statusCode: statusCode,
-      durationMs: durationMs,
-      responseSize: 0,
-      error: error,
-    ));
+    final durationMs =
+        startTime != null
+            ? DateTime.now().millisecondsSinceEpoch - startTime
+            : 0;
+    onRequestCompleted(
+      HttpRequestData(
+        method: options.method,
+        url: options.uri,
+        statusCode: statusCode,
+        durationMs: durationMs,
+        responseSize: 0,
+        error: error,
+      ),
+    );
   }
 
   String _generateHex(int length) {

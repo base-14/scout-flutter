@@ -32,10 +32,7 @@ void main() {
     });
 
     test('onBackground + onForeground within timeout keeps same session', () {
-      final manager = SessionManager(
-        sampleRate: 100.0,
-        timeoutMinutes: 30,
-      );
+      final manager = SessionManager(sampleRate: 100.0, timeoutMinutes: 30);
       final originalId = manager.sessionId;
 
       manager.onBackground();
