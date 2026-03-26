@@ -1,6 +1,37 @@
-## 0.1.0
+## 0.1.0 (unreleased)
 
-- Initial release
+### Crash Detection & SDK Hardening
+- Three-layer crash detection: session marker (OOM/SIGKILL), native exception handlers (JVM/NSException), signal handlers (SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP)
+- Native signal handler captures full crash context: stack trace via frame pointer walk, register dump, signal code, pid/tid/uid, memory map, ABI, build fingerprint, kernel version, process uptime
+- Breadcrumb persistence to disk — breadcrumbs survive crashes and are included in crash spans
+- Early error handler installation catches initialization failures
+- SDK crash safety — all telemetry callbacks wrapped in try/catch, telemetry failure never crashes the host app
+- Graceful fallback for unsupported CPU architectures in native crash handler
+- Android: JVM uncaught exception handler + NDK signal handler via JNI
+- iOS: NSException crash reporter
+
+### Network, Sessions, Logging & Offline Queue
+- HTTP request auto-tracking via `HttpOverrides` — method, URL, status, duration, response size
+- Distributed tracing with W3C `traceparent` header injection for first-party hosts
+- Dio interceptor for apps using Dio (`ScoutFlutter.dioInterceptor`)
+- Session management with configurable sample rate and inactivity timeout
+- Structured logging with OTLP export (debug, info, warning, error levels)
+- Optional `debugPrint()` capture as info-level logs
+- Offline queue for failed exports with configurable storage cap
+- `beforeSend` callback for event filtering and modification
+- Ignore URL patterns for network tracking
+
+### Performance Monitoring
+- Long task (jank) detection with configurable threshold
+- Native ANR detection via platform-specific watchdog threads
+- Cold start and warm start measurement
+- Frame metrics: build time and raster time histograms
+- Frozen frame detection (>700ms)
+- Native memory and CPU usage gauges via platform channels
+- View session tracking — time spent on each screen
+- Screen load time measurement
+
+### Core
 - Auto tap detection via global pointer route (zero widget changes required)
 - Auto lifecycle tracking (pause, resume, exit)
 - Auto error tracking (FlutterError + uncaught errors)

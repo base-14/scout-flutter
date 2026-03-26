@@ -712,12 +712,14 @@ class ScoutFlutter {
           'error',
           'flutter_error: ${details.exceptionAsString()}',
         );
-        FlutterOTel.reportError(
-          details.exceptionAsString(),
-          details.exception,
-          details.stack,
-          attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
-        );
+        _emitSpan('error', {
+          'error.type': 'flutter_error',
+          'error.message': details.exceptionAsString(),
+          if (details.stack != null)
+            'error.stack_trace': details.stack.toString(),
+          'breadcrumbs': _safeBreadcrumbsJson(),
+          ..._commonAttributes(),
+        });
       } catch (_) {
         // Never crash the app due to telemetry failure.
       }
@@ -729,12 +731,13 @@ class ScoutFlutter {
           'error',
           'uncaught_error: ${error.runtimeType}',
         );
-        FlutterOTel.reportError(
-          'Uncaught error',
-          error,
-          stack,
-          attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
-        );
+        _emitSpan('error', {
+          'error.type': 'uncaught_error',
+          'error.message': error.toString(),
+          'error.stack_trace': stack.toString(),
+          'breadcrumbs': _safeBreadcrumbsJson(),
+          ..._commonAttributes(),
+        });
       } catch (_) {
         // Never crash the app due to telemetry failure.
       }
@@ -773,12 +776,13 @@ class ScoutFlutter {
         'error',
         'manual_error: ${error.runtimeType}',
       );
-      FlutterOTel.reportError(
-        error.toString(),
-        error,
-        stackTrace,
-        attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
-      );
+      _emitSpan('error', {
+        'error.type': 'manual_error',
+        'error.message': error.toString(),
+        if (stackTrace != null) 'error.stack_trace': stackTrace.toString(),
+        'breadcrumbs': _safeBreadcrumbsJson(),
+        ..._commonAttributes(),
+      });
     } catch (_) {
       // Never crash the app due to telemetry failure.
     }
