@@ -18,6 +18,12 @@ class GestureDetectorInfo {
 typedef CustomGestureElementDetector =
     GestureDetectorInfo? Function(Widget widget);
 
+/// Callback to filter/modify events before export.
+/// Return the event map to send, or null to drop it.
+/// The map includes a 'type' field: "span", "metric", or "log".
+typedef BeforeSendCallback = Map<String, dynamic>? Function(
+    Map<String, dynamic> event);
+
 /// Configuration for Scout Flutter RUM.
 @immutable
 class ScoutFlutterConfig {
@@ -59,6 +65,33 @@ class ScoutFlutterConfig {
   /// Use this for authentication tokens, API keys, etc.
   final Map<String, String>? headers;
 
+  /// Whether to auto-track HTTP requests via HttpOverrides.
+  final bool enableNetworkTracking;
+
+  /// URL patterns to exclude from network tracking.
+  final List<RegExp>? ignoreUrlPatterns;
+
+  /// Hosts that receive W3C traceparent headers for distributed tracing.
+  final List<String>? firstPartyHosts;
+
+  /// Percentage of sessions to sample (0.0-100.0). Default 100.0 (all).
+  final double sessionSampleRate;
+
+  /// Minutes of inactivity before rotating the session. Default 30.
+  final int sessionTimeoutMinutes;
+
+  /// Whether to enable structured log export via OTLP.
+  final bool enableLogging;
+
+  /// Whether to capture print()/debugPrint() as info-level logs.
+  final bool capturePrintStatements;
+
+  /// Max offline storage in MB for failed exports. Default 5.
+  final int maxOfflineStorageMb;
+
+  /// Callback to filter/modify events before export.
+  final BeforeSendCallback? beforeSend;
+
   const ScoutFlutterConfig({
     required this.serviceName,
     required this.endpoint,
@@ -78,6 +111,18 @@ class ScoutFlutterConfig {
     this.enableStartupTracking = true,
     this.enableConnectivityTracking = true,
     this.headers,
+    this.enableNetworkTracking = true,
+    this.ignoreUrlPatterns,
+    this.firstPartyHosts,
+    double sessionSampleRate = 100.0,
+    this.sessionTimeoutMinutes = 30,
+    this.enableLogging = true,
+    this.capturePrintStatements = false,
+    this.maxOfflineStorageMb = 5,
+    this.beforeSend,
   }) : longTaskThresholdMs = longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
-       anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs;
+       anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,
+       sessionSampleRate = sessionSampleRate < 0.0
+           ? 0.0
+           : (sessionSampleRate > 100.0 ? 100.0 : sessionSampleRate);
 }
