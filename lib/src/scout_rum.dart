@@ -398,15 +398,19 @@ class ScoutFlutter {
   }
 
   static void _setupNativeVitals() {
-    final meter = _meter;
+    // Get the SDK Meter directly, bypassing UIMeter which has a broken
+    // createGauge cast (UIMeter casts APIGauge as Gauge, which fails).
+    final sdkMeter = FlutterOTel.meterProvider.delegate.getMeter(
+      name: _config!.serviceName,
+    );
 
-    final memoryHistogram = meter.createHistogram<double>(
+    final memoryGauge = sdkMeter.createGauge<double>(
       name: 'flutter.memory.usage',
       description: 'App memory usage',
       unit: 'By',
     );
 
-    final cpuHistogram = meter.createHistogram<double>(
+    final cpuGauge = sdkMeter.createGauge<double>(
       name: 'flutter.cpu.usage',
       description: 'App CPU usage percentage',
       unit: '%',
@@ -418,14 +422,14 @@ class ScoutFlutter {
           if (_navObserver?.currentScreenName != null)
             'screen.name': _navObserver!.currentScreenName!,
         }.toAttributes();
-        memoryHistogram.record(usedBytes.toDouble(), attrs);
+        memoryGauge.record(usedBytes.toDouble(), attrs);
       },
       onCpu: (cpuPercent) {
         final attrs = <String, Object>{
           if (_navObserver?.currentScreenName != null)
             'screen.name': _navObserver!.currentScreenName!,
         }.toAttributes();
-        cpuHistogram.record(cpuPercent, attrs);
+        cpuGauge.record(cpuPercent, attrs);
       },
     );
     _nativeVitalsCollector!.start();
