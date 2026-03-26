@@ -66,7 +66,7 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
             if threadResult == KERN_SUCCESS, let threads = threadList {
                 for i in 0..<Int(threadCount) {
                     var threadInfo = thread_basic_info()
-                    var threadInfoCount = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT)
+                    var threadInfoCount = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
                     let infoResult = withUnsafeMutablePointer(to: &threadInfo) {
                         $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
                             thread_info(threads[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &threadInfoCount)

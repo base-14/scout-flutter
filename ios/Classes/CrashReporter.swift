@@ -1,6 +1,5 @@
 import Foundation
 import KSCrash
-import KSCrashRecording
 
 /// Native crash reporter for iOS using KSCrash.
 ///
@@ -8,7 +7,6 @@ import KSCrashRecording
 /// `getPendingCrashReports()` retrieves reports from the previous session.
 class CrashReporter {
     private static var isInstalled = false
-    private static let crashDirectory = CrashReporter.crashDir()
 
     /// Install KSCrash crash handlers. Call once during plugin init.
     static func install() {
@@ -17,27 +15,30 @@ class CrashReporter {
 
         let config = KSCrashConfiguration()
         config.monitors = [.machException, .signal, .cppException, .nsException]
-        KSCrash.shared.install(with: config)
+        do {
+            try KSCrash.shared.install(with: config)
+        } catch {
+            NSLog("ScoutFlutter: KSCrash install failed: \(error)")
+        }
     }
 
     /// Returns pending crash reports from the previous session, then deletes them.
-    ///
-    /// Each report is a dictionary with keys:
-    /// - `crash_type`: String (e.g. "mach", "signal", "nsexception", "cpp_exception")
-    /// - `crash_reason`: String
-    /// - `crash_timestamp`: String (ISO 8601)
-    /// - `crash_thread_name`: String?
-    /// - `crash_stack_trace`: String (symbolicated if available)
     static func getPendingCrashReports() -> [[String: Any]] {
-        let store = CrashReportStore.defaultStore()
-        let reportIds = store?.reportIDs ?? []
+        let store: CrashReportStore
+        do {
+            store = try CrashReportStore.defaultStore()
+        } catch {
+            NSLog("ScoutFlutter: Failed to get crash report store: \(error)")
+            return []
+        }
 
+        let reportIds = store.reportIDs
         if reportIds.isEmpty { return [] }
 
         var reports: [[String: Any]] = []
 
         for reportId in reportIds {
-            guard let report = store?.report(for: reportId.int64Value) as? [String: Any] else {
+            guard let report = store.report(for: reportId.int64Value) as? [String: Any] else {
                 continue
             }
 
@@ -47,12 +48,10 @@ class CrashReporter {
             if let crash = report["crash"] as? [String: Any],
                let error = crash["error"] as? [String: Any] {
 
-                // Crash type
                 if let type = error["type"] as? String {
                     parsed["crash_type"] = type
                 }
 
-                // Crash reason
                 if let mach = error["mach"] as? [String: Any],
                    let exceptionName = mach["exception_name"] as? String {
                     parsed["crash_reason"] = exceptionName
@@ -70,10 +69,10 @@ class CrashReporter {
 
                 // Stack trace from crashed thread
                 if let threads = crash["threads"] as? [[String: Any]] {
-                    let crashedThread = threads.first { ($0["crashed"] as? Bool) == true } ?? threads.first
-                    if let backtrace = crashedThread?["backtrace"] as? [String: Any],
-                       let frames = backtrace["contents"] as? [[String: Any]] {
-                        let trace = frames.prefix(30).map { frame -> String in
+                    let crashedThread = threads.first(where: { ($0["crashed"] as? Bool) == true }) ?? threads.first
+                    if let bt = crashedThread?["backtrace"] as? [String: Any],
+                       let frames = bt["contents"] as? [[String: Any]] {
+                        let trace = frames.prefix(30).map { frame in
                             let symbol = frame["symbol_name"] as? String ?? "??"
                             let addr = frame["instruction_addr"] as? UInt64 ?? 0
                             let obj = frame["object_name"] as? String ?? "??"
@@ -101,14 +100,7 @@ class CrashReporter {
             }
         }
 
-        // Delete all reports after reading
-        store?.deleteAllReports()
-
+        store.deleteAllReports()
         return reports
-    }
-
-    private static func crashDir() -> String {
-        let paths = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true)
-        return (paths.first ?? NSTemporaryDirectory()) + "/scout_crash"
     }
 }
