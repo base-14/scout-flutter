@@ -54,6 +54,10 @@ class GlobalTapDetector {
     GestureBinding.instance.pointerRouter.addGlobalRoute(_handleEvent);
   }
 
+  void stop() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_handleEvent);
+  }
+
   void _handleEvent(PointerEvent event) {
     if (event is PointerDownEvent) {
       _pointerDownPositions[event.pointer] = event.position;

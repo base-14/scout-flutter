@@ -64,6 +64,9 @@ class ScoutFlutter {
   static Timer? _offlineFlushTimer;
   static ScoutDioInterceptor? _dioInterceptor;
   static DebugPrintCallback? _originalDebugPrint;
+  static StreamSubscription? _connectivitySubscription;
+  static HttpOverrides? _previousHttpOverrides;
+  static bool _flushing = false;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -213,7 +216,8 @@ class ScoutFlutter {
     }
 
     if (config.enableConnectivityTracking) {
-      Connectivity().onConnectivityChanged.listen((result) {
+      _connectivitySubscription =
+          Connectivity().onConnectivityChanged.listen((result) {
         if (result.isNotEmpty) {
           _connectivityType = result.first.name;
         }
@@ -265,9 +269,9 @@ class ScoutFlutter {
 
     // HTTP tracking via HttpOverrides
     if (config.enableNetworkTracking) {
-      final existingOverrides = HttpOverrides.current;
+      _previousHttpOverrides = HttpOverrides.current;
       HttpOverrides.global = ScoutHttpOverrides(
-        existingOverrides: existingOverrides,
+        existingOverrides: _previousHttpOverrides,
         exportEndpoint: httpEndpoint,
         ignorePatterns: config.ignoreUrlPatterns,
         firstPartyHosts: config.firstPartyHosts,
@@ -276,30 +280,44 @@ class ScoutFlutter {
     }
   }
 
+  /// Applies the beforeSend callback. Returns the (possibly modified) attributes,
+  /// or null if the event should be dropped.
+  static Map<String, Object>? _applyBeforeSend(
+    String type,
+    String name,
+    Map<String, Object> attributes,
+  ) {
+    if (_config?.beforeSend == null) return attributes;
+    final event = <String, dynamic>{
+      'type': type,
+      'name': name,
+      ...attributes,
+    };
+    final result = _config!.beforeSend!(event);
+    if (result == null) return null;
+    final filtered = <String, Object>{};
+    for (final entry in result.entries) {
+      if (entry.key != 'type' && entry.key != 'name') {
+        final value = entry.value;
+        if (value != null && value is Object) {
+          filtered[entry.key] = value;
+        }
+      }
+    }
+    return filtered;
+  }
+
   /// Creates and immediately ends a span, subject to sampling and beforeSend.
   static void _emitSpan(String name, Map<String, Object> attributes) {
     if (!isInitialized) return;
     if (!(_sessionManager?.isSampled ?? true)) return;
 
-    if (_config?.beforeSend != null) {
-      final event = <String, dynamic>{
-        'type': 'span',
-        'name': name,
-        ...attributes,
-      };
-      final result = _config!.beforeSend!(event);
-      if (result == null) return;
-      attributes = {};
-      for (final entry in result.entries) {
-        if (entry.key != 'type' && entry.key != 'name' && entry.value != null) {
-          attributes[entry.key] = entry.value as Object;
-        }
-      }
-    }
+    final filtered = _applyBeforeSend('span', name, attributes);
+    if (filtered == null) return;
 
     final span = FlutterOTel.tracer.startSpan(
       name,
-      attributes: attributes.isEmpty ? null : attributes.toAttributes(),
+      attributes: filtered.isEmpty ? null : filtered.toAttributes(),
     );
     span.end();
   }
@@ -665,7 +683,7 @@ class ScoutFlutter {
     if (!isInitialized) return;
     if (!(_sessionManager?.isSampled ?? true)) return;
 
-    var attributes = <String, Object>{
+    final attributes = _applyBeforeSend('span', 'http.request', {
       'http.method': data.method,
       'http.url': data.url.toString(),
       'http.status_code': data.statusCode,
@@ -673,25 +691,8 @@ class ScoutFlutter {
       'http.duration_ms': data.durationMs,
       if (data.error != null) 'http.error': data.error!,
       ..._commonAttributes(),
-    };
-
-    if (_config?.beforeSend != null) {
-      final event = <String, dynamic>{
-        'type': 'span',
-        'name': 'http.request',
-        ...attributes,
-      };
-      final result = _config!.beforeSend!(event);
-      if (result == null) return;
-      attributes = {};
-      for (final entry in result.entries) {
-        if (entry.key != 'type' &&
-            entry.key != 'name' &&
-            entry.value != null) {
-          attributes[entry.key] = entry.value as Object;
-        }
-      }
-    }
+    });
+    if (attributes == null) return;
 
     final span = FlutterOTel.tracer.startSpan(
       'http.request',
@@ -706,30 +707,36 @@ class ScoutFlutter {
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     if (!(_sessionManager?.isSampled ?? true)) return;
 
+    final logAttrs = <String, Object>{
+      'session.id': _sessionManager?.sessionId ?? '',
+      if (_navObserver?.currentScreenName != null)
+        'screen.name': _navObserver!.currentScreenName!,
+      if (_userId != null) 'enduser.id': _userId!,
+      ...?entry.attributes,
+    };
+
+    // Apply beforeSend — user can modify message/attributes or drop the log.
+    String body = entry.message;
     if (_config?.beforeSend != null) {
       final event = <String, dynamic>{
         'type': 'log',
         'severity': entry.level.severityText,
         'message': entry.message,
-        ...?entry.attributes,
+        ...logAttrs,
       };
       final result = _config!.beforeSend!(event);
       if (result == null) return;
+      // Use possibly modified message
+      body = (result['message'] as String?) ?? entry.message;
     }
 
     final logRecord = ScoutLogRecord(
       severityNumber: entry.level.severityNumber,
       severityText: entry.level.severityText,
-      body: entry.message,
+      body: body,
       timestampNanos: BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
           BigInt.from(1000),
-      attributes: {
-        'session.id': _sessionManager?.sessionId ?? '',
-        if (_navObserver?.currentScreenName != null)
-          'screen.name': _navObserver!.currentScreenName!,
-        if (_userId != null) 'enduser.id': _userId!,
-        ...?entry.attributes,
-      },
+      attributes: logAttrs,
     );
     _logExporter?.export([logRecord]).then((success) {
       if (!success) {
@@ -743,11 +750,15 @@ class ScoutFlutter {
           },
         ]);
       }
+    }).catchError((_) {
+      // Silently handle export errors
     });
   }
 
   static Future<void> _flushOfflineQueue() async {
-    if (_offlineQueue == null) return;
+    if (_flushing || _offlineQueue == null) return;
+    _flushing = true;
+    try {
     final batches = await _offlineQueue!.dequeueAll();
     for (final batch in batches) {
       try {
@@ -776,6 +787,9 @@ class ScoutFlutter {
         // Drop failed re-exports to avoid infinite loops
       }
     }
+    } finally {
+      _flushing = false;
+    }
   }
 
   /// Reset all state for test isolation.
@@ -785,6 +799,7 @@ class ScoutFlutter {
     _breadcrumbManager.clear();
     _userId = null;
     _userEmail = null;
+    _tapDetector?.stop();
     _tapDetector = null;
     _longTaskDetector?.stop();
     _longTaskDetector = null;
@@ -811,5 +826,12 @@ class ScoutFlutter {
       debugPrint = _originalDebugPrint!;
       _originalDebugPrint = null;
     }
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
+    if (_previousHttpOverrides != null) {
+      HttpOverrides.global = _previousHttpOverrides;
+      _previousHttpOverrides = null;
+    }
+    _flushing = false;
   }
 }
