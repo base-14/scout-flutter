@@ -11,11 +11,13 @@ class ScoutDioInterceptor extends Interceptor {
 
   final List<String>? firstPartyHosts;
   final void Function(HttpRequestData data) onRequestCompleted;
+  final void Function(String traceId, String spanId)? onTraceContextCreated;
   final Random _random = Random.secure();
 
   ScoutDioInterceptor({
     this.firstPartyHosts,
     required this.onRequestCompleted,
+    this.onTraceContextCreated,
   });
 
   @override
@@ -26,6 +28,7 @@ class ScoutDioInterceptor extends Interceptor {
       final traceId = _generateHex(32);
       final spanId = _generateHex(16);
       options.headers['traceparent'] = generateTraceparent(traceId, spanId);
+      onTraceContextCreated?.call(traceId, spanId);
     }
 
     handler.next(options);

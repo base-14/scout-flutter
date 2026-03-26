@@ -22,6 +22,7 @@ class ScoutTrackingHttpClient implements HttpClient {
   final List<RegExp>? ignorePatterns;
   final List<String>? firstPartyHosts;
   final void Function(HttpRequestData data) onRequestCompleted;
+  final void Function(String traceId, String spanId)? onTraceContextCreated;
 
   ScoutTrackingHttpClient({
     required this.inner,
@@ -29,6 +30,7 @@ class ScoutTrackingHttpClient implements HttpClient {
     required this.onRequestCompleted,
     this.ignorePatterns,
     this.firstPartyHosts,
+    this.onTraceContextCreated,
   });
 
   // --- Properties: delegate to inner ---
@@ -138,6 +140,7 @@ class ScoutTrackingHttpClient implements HttpClient {
       final traceId = _randomHex(16); // 32 hex chars
       final spanId = _randomHex(8); // 16 hex chars
       request.headers.set('traceparent', generateTraceparent(traceId, spanId));
+      onTraceContextCreated?.call(traceId, spanId);
     }
 
     return _TrackedHttpClientRequest(

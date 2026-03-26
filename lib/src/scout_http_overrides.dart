@@ -28,6 +28,7 @@ class ScoutHttpOverrides extends HttpOverrides {
   final List<RegExp>? ignorePatterns;
   final List<String>? firstPartyHosts;
   final void Function(HttpRequestData data) onRequestCompleted;
+  final void Function(String traceId, String spanId)? onTraceContextCreated;
 
   ScoutHttpOverrides({
     required this.existingOverrides,
@@ -35,6 +36,7 @@ class ScoutHttpOverrides extends HttpOverrides {
     required this.onRequestCompleted,
     this.ignorePatterns,
     this.firstPartyHosts,
+    this.onTraceContextCreated,
   });
 
   @override
@@ -47,6 +49,7 @@ class ScoutHttpOverrides extends HttpOverrides {
       ignorePatterns: ignorePatterns,
       firstPartyHosts: firstPartyHosts,
       onRequestCompleted: onRequestCompleted,
+      onTraceContextCreated: onTraceContextCreated,
     );
   }
 }

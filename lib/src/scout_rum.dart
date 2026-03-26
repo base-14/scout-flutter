@@ -67,6 +67,8 @@ class ScoutFlutter {
   static StreamSubscription? _connectivitySubscription;
   static HttpOverrides? _previousHttpOverrides;
   static bool _flushing = false;
+  static String? _activeTraceId;
+  static String? _activeSpanId;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -85,6 +87,10 @@ class ScoutFlutter {
     _dioInterceptor ??= ScoutDioInterceptor(
       firstPartyHosts: _config?.firstPartyHosts,
       onRequestCompleted: _onHttpRequestCompleted,
+      onTraceContextCreated: (traceId, spanId) {
+        _activeTraceId = traceId;
+        _activeSpanId = spanId;
+      },
     );
     return _dioInterceptor!;
   }
@@ -276,6 +282,10 @@ class ScoutFlutter {
         ignorePatterns: config.ignoreUrlPatterns,
         firstPartyHosts: config.firstPartyHosts,
         onRequestCompleted: _onHttpRequestCompleted,
+        onTraceContextCreated: (traceId, spanId) {
+          _activeTraceId = traceId;
+          _activeSpanId = spanId;
+        },
       );
     }
   }
@@ -702,6 +712,10 @@ class ScoutFlutter {
       span.setStatus(SpanStatusCode.Error, data.error!);
     }
     span.end();
+
+    // Clear trace context now that the request is complete.
+    _activeTraceId = null;
+    _activeSpanId = null;
   }
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
@@ -737,6 +751,8 @@ class ScoutFlutter {
       timestampNanos: BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
           BigInt.from(1000),
       attributes: logAttrs,
+      traceId: _activeTraceId,
+      spanId: _activeSpanId,
     );
     _logExporter?.export([logRecord]).then((success) {
       if (!success) {
@@ -833,5 +849,7 @@ class ScoutFlutter {
       _previousHttpOverrides = null;
     }
     _flushing = false;
+    _activeTraceId = null;
+    _activeSpanId = null;
   }
 }
