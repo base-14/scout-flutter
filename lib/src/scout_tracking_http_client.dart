@@ -356,28 +356,33 @@ class _TrackedHttpClientRequest implements HttpClientRequest {
     try {
       final response = await inner.close();
       _stopwatch.stop();
-      _onRequestCompleted(
-        HttpRequestData(
-          method: _trackingMethod,
-          url: _trackingUrl,
-          statusCode: response.statusCode,
-          durationMs: _stopwatch.elapsedMilliseconds,
-          responseSize: response.contentLength < 0 ? 0 : response.contentLength,
-        ),
-      );
+      try {
+        _onRequestCompleted(
+          HttpRequestData(
+            method: _trackingMethod,
+            url: _trackingUrl,
+            statusCode: response.statusCode,
+            durationMs: _stopwatch.elapsedMilliseconds,
+            responseSize:
+                response.contentLength < 0 ? 0 : response.contentLength,
+          ),
+        );
+      } catch (_) {}
       return response;
     } catch (e) {
       _stopwatch.stop();
-      _onRequestCompleted(
-        HttpRequestData(
-          method: _trackingMethod,
-          url: _trackingUrl,
-          statusCode: 0,
-          durationMs: _stopwatch.elapsedMilliseconds,
-          responseSize: 0,
-          error: e.toString(),
-        ),
-      );
+      try {
+        _onRequestCompleted(
+          HttpRequestData(
+            method: _trackingMethod,
+            url: _trackingUrl,
+            statusCode: 0,
+            durationMs: _stopwatch.elapsedMilliseconds,
+            responseSize: 0,
+            error: e.toString(),
+          ),
+        );
+      } catch (_) {}
       rethrow;
     }
   }

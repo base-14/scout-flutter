@@ -11,6 +11,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         )
         let instance = ScoutFlutterPlugin(channel: channel)
         registrar.addMethodCallDelegate(instance, channel: channel)
+
+        // Install crash handlers as early as possible.
+        CrashReporter.install()
     }
 
     init(channel: FlutterMethodChannel) {
@@ -77,6 +80,10 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 vm_deallocate(mach_task_self_, vm_address_t(bitPattern: threads), vm_size_t(threadCount) * vm_size_t(MemoryLayout<thread_t>.size))
             }
             result(["cpu_percent": totalCpu])
+
+        case "getNativeCrashReports":
+            let reports = CrashReporter.getPendingCrashReports()
+            result(reports)
 
         default:
             result(FlutterMethodNotImplemented)

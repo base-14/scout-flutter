@@ -22,6 +22,7 @@ pubspec.lock
 # Android
 **/android/**/local.properties
 **/android/.gradle/
+**/android/.cxx/
 **/android/app/.cxx/
 **/android/captures/
 **/android/**/GeneratedPluginRegistrant.java

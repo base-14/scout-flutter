@@ -33,6 +33,22 @@ class ScoutPlatformChannel {
     return result ?? {};
   }
 
+  /// Retrieve pending native crash reports from the previous session.
+  ///
+  /// Returns a list of crash report maps, each with keys:
+  /// - `crash_type`: "jvm_exception", "native_signal", "mach", "signal", etc.
+  /// - `crash_reason`: exception message or signal name
+  /// - `crash_timestamp`: ISO 8601 timestamp
+  /// - `crash_thread_name`: thread that crashed
+  /// - `crash_stack_trace`: stack trace string
+  static Future<List<Map<String, dynamic>>> getNativeCrashReports() async {
+    final result = await _channel.invokeListMethod<Map>(
+      'getNativeCrashReports',
+    );
+    if (result == null) return [];
+    return result.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
   /// Set up handler for ANR events from native side.
   static void setAnrHandler(void Function(int durationMs) onAnr) {
     _channel.setMethodCallHandler((call) async {

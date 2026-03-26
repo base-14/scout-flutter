@@ -1,5 +1,6 @@
 package com.base14.scout_flutter
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -10,15 +11,21 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var channel: MethodChannel
     private var anrWatchdog: AnrWatchdog? = null
+    private var context: Context? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, "com.base14.scout_flutter")
         channel.setMethodCallHandler(this)
+        context = binding.applicationContext
+
+        // Install crash handlers as early as possible.
+        CrashReporter.install(binding.applicationContext)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         anrWatchdog?.stop()
+        context = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -68,6 +75,10 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 } catch (e: Exception) {
                     result.success(mapOf("ticks" to -1L))
                 }
+            }
+            "getNativeCrashReports" -> {
+                val reports = CrashReporter.getPendingCrashReports()
+                result.success(reports)
             }
             else -> result.notImplemented()
         }

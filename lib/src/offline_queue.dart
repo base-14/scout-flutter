@@ -15,14 +15,18 @@ class OfflineQueue {
 
   /// Write a batch of events to a timestamped file.
   Future<void> enqueue(String signal, List<Map<String, dynamic>> events) async {
-    if (!directory.existsSync()) {
-      directory.createSync(recursive: true);
+    try {
+      if (!directory.existsSync()) {
+        directory.createSync(recursive: true);
+      }
+      final timestamp = DateTime.now().microsecondsSinceEpoch;
+      final file = File('${directory.path}/${signal}_$timestamp.jsonl');
+      final lines = events.map((e) => jsonEncode(e)).join('\n');
+      await file.writeAsString(lines);
+      await enforceStorageCap();
+    } catch (_) {
+      // Never crash the app due to offline queue failure.
     }
-    final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final file = File('${directory.path}/${signal}_$timestamp.jsonl');
-    final lines = events.map((e) => jsonEncode(e)).join('\n');
-    await file.writeAsString(lines);
-    await enforceStorageCap();
   }
 
   /// Read all queued batches, delete the files, return the data.

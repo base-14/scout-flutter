@@ -24,6 +24,7 @@ import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
 import 'session_manager.dart';
 import 'breadcrumb_manager.dart';
+import 'crash_detector.dart';
 import 'global_tap_detector.dart';
 
 /// Main entry point for Scout Flutter RUM.
@@ -67,6 +68,7 @@ class ScoutFlutter {
   static bool _flushing = false;
   static String? _activeTraceId;
   static String? _activeSpanId;
+  static CrashDetector? _crashDetector;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -98,33 +100,42 @@ class ScoutFlutter {
   static NavigatorObserver get navigatorObserver {
     _navObserver ??= AutoNameNavigatorObserver(
       onScreenChanged: (screenName) {
-        _emitSpan('screen_view', {
-          'screen.name': screenName,
-          ..._commonAttributes(),
-        });
-        addBreadcrumb('navigation', 'screen: $screenName');
+        try {
+          _emitSpan('screen_view', {
+            'screen.name': screenName,
+            ..._commonAttributes(),
+          });
+          _crashDetector?.updateLastScreen(screenName);
+          addBreadcrumb('navigation', 'screen: $screenName');
+        } catch (_) {}
       },
       onScreenLoadTime: (screenName, loadTime) {
-        _emitSpan('screen_load', {
-          'screen.name': screenName,
-          'screen.load_time': loadTime.inMilliseconds / 1000.0,
-          ..._commonAttributes(),
-        });
+        try {
+          _emitSpan('screen_load', {
+            'screen.name': screenName,
+            'screen.load_time': loadTime.inMilliseconds / 1000.0,
+            ..._commonAttributes(),
+          });
+        } catch (_) {}
       },
       onScreenEnter: (screenName) {
-        if (!isInitialized) return;
-        addBreadcrumb('view_session', 'entered: $screenName');
+        try {
+          if (!isInitialized) return;
+          addBreadcrumb('view_session', 'entered: $screenName');
+        } catch (_) {}
       },
       onScreenExit: (screenName, timeSpent) {
-        _emitSpan('view_session', {
-          'screen.name': screenName,
-          'view.time_spent': timeSpent.inMilliseconds / 1000.0,
-          ..._commonAttributes(),
-        });
-        addBreadcrumb(
-          'view_session',
-          'exited: $screenName (${timeSpent.inMilliseconds}ms)',
-        );
+        try {
+          _emitSpan('view_session', {
+            'screen.name': screenName,
+            'view.time_spent': timeSpent.inMilliseconds / 1000.0,
+            ..._commonAttributes(),
+          });
+          addBreadcrumb(
+            'view_session',
+            'exited: $screenName (${timeSpent.inMilliseconds}ms)',
+          );
+        } catch (_) {}
       },
     );
     return _navObserver!;
@@ -142,6 +153,32 @@ class ScoutFlutter {
   static Future<void> initialize({required ScoutFlutterConfig config}) async {
     _coldStartStopwatch ??= Stopwatch()..start();
     WidgetsFlutterBinding.ensureInitialized();
+
+    // Install error handlers and crash detector FIRST — before any async
+    // work that could fail. This ensures Dart exceptions during
+    // initialization itself are captured and persisted to disk.
+    try {
+      final tempDir = await getTemporaryDirectory();
+      _crashDetector = CrashDetector(
+        directory: Directory('${tempDir.path}/scout_crash'),
+      );
+    } catch (_) {
+      // If we can't even create the crash detector, continue without it.
+    }
+    if (config.enableErrorTracking) {
+      _setupErrorHandlers();
+    }
+
+    // Wrap the rest of initialization — SDK failure must never crash the app.
+    try {
+      await _initializeCore(config);
+    } catch (e) {
+      debugPrint('ScoutFlutter: initialization failed: $e');
+    }
+  }
+
+  static Future<void> _initializeCore(ScoutFlutterConfig config) async {
+    final tempDir = await getTemporaryDirectory();
 
     final resourceAttrs = <String, Object>{
       if (config.environment != null) 'environment': config.environment!,
@@ -186,10 +223,6 @@ class ScoutFlutter {
 
     _config = config;
 
-    if (config.enableErrorTracking) {
-      _setupErrorHandlers();
-    }
-
     if (config.enableAutoTapTracking) {
       _setupGlobalTapDetection(config);
     }
@@ -220,10 +253,12 @@ class ScoutFlutter {
       _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
         result,
       ) {
-        if (result.isNotEmpty) {
-          _connectivityType = result.first.name;
-        }
-        _flushOfflineQueue();
+        try {
+          if (result.isNotEmpty) {
+            _connectivityType = result.first.name;
+          }
+          _flushOfflineQueue();
+        } catch (_) {}
       });
     }
 
@@ -235,19 +270,82 @@ class ScoutFlutter {
       timeoutMinutes: config.sessionTimeoutMinutes,
     );
 
-    // Offline queue
-    final tempDir = await getTemporaryDirectory();
+    // Offline queue + crash detection
     final offlineDir = Directory('${tempDir.path}/scout_offline');
     _offlineQueue = OfflineQueue(
       directory: offlineDir,
       maxStorageMb: config.maxOfflineStorageMb,
     );
 
+    // Crash detection — check previous session before writing new marker.
+    try {
+      final previousCrash = await _crashDetector?.checkPreviousCrash();
+      if (previousCrash != null) {
+        _emitSpan('app_crash', {
+          'crash.previous_session_id': previousCrash.sessionId,
+          'crash.started_at': previousCrash.startedAt.toIso8601String(),
+          'crash.status': previousCrash.status,
+          if (previousCrash.lastScreen != null)
+            'crash.last_screen': previousCrash.lastScreen!,
+          if (previousCrash.breadcrumbs != null)
+            'breadcrumbs': previousCrash.breadcrumbs!,
+          ..._commonAttributes(),
+        });
+      }
+      await _crashDetector?.markSessionStarted(
+        sessionId: _sessionManager!.sessionId,
+      );
+    } catch (_) {}
+
+    // Native crash reports (KSCrash on iOS, signal handler on Android).
+    // These are written to disk by native code when the app crashes,
+    // then retrieved on next launch.
+    try {
+      final nativeCrashes = await ScoutPlatformChannel.getNativeCrashReports();
+      for (final crash in nativeCrashes) {
+        _emitSpan('native_crash', {
+          'crash.type': crash['crash_type'] as Object? ?? 'unknown',
+          'crash.reason': crash['crash_reason'] as Object? ?? 'unknown',
+          'crash.timestamp': crash['crash_timestamp'] as Object? ?? '',
+          if (crash['crash_thread_name'] != null)
+            'crash.thread': crash['crash_thread_name'] as Object,
+          if (crash['crash_stack_trace'] != null)
+            'crash.stack_trace': crash['crash_stack_trace'] as Object,
+          if (crash['crash_registers'] != null)
+            'crash.registers': crash['crash_registers'] as Object,
+          if (crash['crash_memory_map'] != null)
+            'crash.memory_map': crash['crash_memory_map'] as Object,
+          if (crash['crash_signal_code'] != null)
+            'crash.signal_code': crash['crash_signal_code'] as Object,
+          if (crash['crash_pid'] != null)
+            'crash.pid': crash['crash_pid'] as Object,
+          if (crash['crash_tid'] != null)
+            'crash.tid': crash['crash_tid'] as Object,
+          if (crash['crash_uid'] != null)
+            'crash.uid': crash['crash_uid'] as Object,
+          if (crash['crash_abi'] != null)
+            'crash.abi': crash['crash_abi'] as Object,
+          if (crash['crash_build_fingerprint'] != null)
+            'crash.build_fingerprint':
+                crash['crash_build_fingerprint'] as Object,
+          if (crash['crash_kernel'] != null)
+            'crash.kernel': crash['crash_kernel'] as Object,
+          if (crash['crash_process_uptime_secs'] != null)
+            'crash.process_uptime_secs':
+                crash['crash_process_uptime_secs'] as Object,
+          ..._commonAttributes(),
+        });
+      }
+    } catch (_) {
+      // Platform channel may not be available (e.g. tests, web).
+    }
+
     // Periodic offline flush (every 60 seconds)
-    _offlineFlushTimer = Timer.periodic(
-      const Duration(seconds: 60),
-      (_) => _flushOfflineQueue(),
-    );
+    _offlineFlushTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      try {
+        _flushOfflineQueue();
+      } catch (_) {}
+    });
 
     // Structured logging
     if (config.enableLogging) {
@@ -262,9 +360,11 @@ class ScoutFlutter {
         _originalDebugPrint = debugPrint;
         debugPrint = (String? message, {int? wrapWidth}) {
           _originalDebugPrint!(message, wrapWidth: wrapWidth);
-          if (message != null) {
-            _logger?.logInfo(message);
-          }
+          try {
+            if (message != null) {
+              _logger?.logInfo(message);
+            }
+          } catch (_) {}
         };
       }
     }
@@ -328,13 +428,15 @@ class ScoutFlutter {
     _tapDetector = GlobalTapDetector(
       customGestureDetector: config.customGestureDetector,
       onTapDetected: (elementName, elementDescription) {
-        _emitSpan('user_interaction', {
-          'user_interaction.type': 'click',
-          'user_interaction.target': elementDescription,
-          'user_interaction.target.type': elementName,
-          ..._commonAttributes(),
-        });
-        addBreadcrumb('tap', '$elementName: $elementDescription');
+        try {
+          _emitSpan('user_interaction', {
+            'user_interaction.type': 'click',
+            'user_interaction.target': elementDescription,
+            'user_interaction.target.type': elementName,
+            ..._commonAttributes(),
+          });
+          addBreadcrumb('tap', '$elementName: $elementDescription');
+        } catch (_) {}
       },
     );
     _tapDetector!.start();
@@ -343,23 +445,33 @@ class ScoutFlutter {
   static void _setupLifecycleTracking() {
     _lifecycleListener = AppLifecycleListener(
       onInactive: () {
-        if (_config?.enableStartupTracking == true) {
-          _warmStartStopwatch = Stopwatch()..start();
-        }
+        try {
+          if (_config?.enableStartupTracking == true) {
+            _warmStartStopwatch = Stopwatch()..start();
+          }
+        } catch (_) {}
       },
       onPause: () {
-        _sessionManager?.onBackground();
-        addBreadcrumb('lifecycle', 'app_paused');
+        try {
+          _sessionManager?.onBackground();
+          _crashDetector?.markSessionPaused();
+          addBreadcrumb('lifecycle', 'app_paused');
+        } catch (_) {}
       },
       onResume: () {
-        _sessionManager?.onForeground();
-        addBreadcrumb('lifecycle', 'app_resumed');
-        if (_config?.enableStartupTracking == true) {
-          _measureWarmStart();
-        }
+        try {
+          _sessionManager?.onForeground();
+          _crashDetector?.markSessionResumed();
+          addBreadcrumb('lifecycle', 'app_resumed');
+          if (_config?.enableStartupTracking == true) {
+            _measureWarmStart();
+          }
+        } catch (_) {}
       },
       onExitRequested: () async {
-        addBreadcrumb('lifecycle', 'app_exit_requested');
+        try {
+          addBreadcrumb('lifecycle', 'app_exit_requested');
+        } catch (_) {}
         return AppExitResponse.exit;
       },
     );
@@ -401,17 +513,19 @@ class ScoutFlutter {
     _longTaskDetector = LongTaskDetector(
       threshold: Duration(milliseconds: config.longTaskThresholdMs),
       onLongTask: (duration) {
-        String? currentScreen;
-        if (_navObserver != null) {
-          currentScreen = _navObserver!.currentScreenName;
-        }
-        _emitSpan('long_task', {
-          'long_task.duration': duration.inMilliseconds / 1000.0,
-          'long_task.threshold': config.longTaskThresholdMs / 1000.0,
-          if (currentScreen != null) 'screen.name': currentScreen,
-          ..._commonAttributes(),
-        });
-        addBreadcrumb('long_task', 'Long task: ${duration.inMilliseconds}ms');
+        try {
+          String? currentScreen;
+          if (_navObserver != null) {
+            currentScreen = _navObserver!.currentScreenName;
+          }
+          _emitSpan('long_task', {
+            'long_task.duration': duration.inMilliseconds / 1000.0,
+            'long_task.threshold': config.longTaskThresholdMs / 1000.0,
+            if (currentScreen != null) 'screen.name': currentScreen,
+            ..._commonAttributes(),
+          });
+          addBreadcrumb('long_task', 'Long task: ${duration.inMilliseconds}ms');
+        } catch (_) {}
       },
     );
     _longTaskDetector!.start();
@@ -419,17 +533,19 @@ class ScoutFlutter {
 
   static Future<void> _setupAnrDetection(ScoutFlutterConfig config) async {
     ScoutPlatformChannel.setAnrHandler((durationMs) {
-      String? currentScreen;
-      if (_navObserver != null) {
-        currentScreen = _navObserver!.currentScreenName;
-      }
-      _emitSpan('anr', {
-        'anr.duration': durationMs / 1000.0,
-        'anr.threshold': config.anrThresholdMs / 1000.0,
-        if (currentScreen != null) 'screen.name': currentScreen,
-        ..._commonAttributes(),
-      });
-      addBreadcrumb('anr', 'App not responding: ${durationMs}ms');
+      try {
+        String? currentScreen;
+        if (_navObserver != null) {
+          currentScreen = _navObserver!.currentScreenName;
+        }
+        _emitSpan('anr', {
+          'anr.duration': durationMs / 1000.0,
+          'anr.threshold': config.anrThresholdMs / 1000.0,
+          if (currentScreen != null) 'screen.name': currentScreen,
+          ..._commonAttributes(),
+        });
+        addBreadcrumb('anr', 'App not responding: ${durationMs}ms');
+      } catch (_) {}
     });
     await ScoutPlatformChannel.startAnrDetection(
       thresholdMs: config.anrThresholdMs,
@@ -453,35 +569,42 @@ class ScoutFlutter {
 
     _frameMetricsCollector = FrameMetricsCollector(
       onFrameTiming: (buildTime, rasterTime) {
-        if (!(_sessionManager?.isSampled ?? true)) return;
-        final screenAttr =
-            <String, Object>{
-              if (_navObserver?.currentScreenName != null)
-                'screen.name': _navObserver!.currentScreenName!,
-              if (_sessionManager != null)
-                'session.id': _sessionManager!.sessionId,
-            }.toAttributes();
+        try {
+          if (!(_sessionManager?.isSampled ?? true)) return;
+          final screenAttr =
+              <String, Object>{
+                if (_navObserver?.currentScreenName != null)
+                  'screen.name': _navObserver!.currentScreenName!,
+                if (_sessionManager != null)
+                  'session.id': _sessionManager!.sessionId,
+              }.toAttributes();
 
-        buildHistogram.record(buildTime.inMicroseconds / 1000000.0, screenAttr);
-        rasterHistogram.record(
-          rasterTime.inMicroseconds / 1000000.0,
-          screenAttr,
-        );
+          buildHistogram.record(
+            buildTime.inMicroseconds / 1000000.0,
+            screenAttr,
+          );
+          rasterHistogram.record(
+            rasterTime.inMicroseconds / 1000000.0,
+            screenAttr,
+          );
+        } catch (_) {}
       },
       onFrozenFrame: (duration) {
-        String? currentScreen;
-        if (_navObserver != null) {
-          currentScreen = _navObserver!.currentScreenName;
-        }
-        _emitSpan('frozen_frame', {
-          'frozen_frame.duration': duration.inMilliseconds / 1000.0,
-          if (currentScreen != null) 'screen.name': currentScreen,
-          ..._commonAttributes(),
-        });
-        addBreadcrumb(
-          'frozen_frame',
-          'Frozen frame: ${duration.inMilliseconds}ms',
-        );
+        try {
+          String? currentScreen;
+          if (_navObserver != null) {
+            currentScreen = _navObserver!.currentScreenName;
+          }
+          _emitSpan('frozen_frame', {
+            'frozen_frame.duration': duration.inMilliseconds / 1000.0,
+            if (currentScreen != null) 'screen.name': currentScreen,
+            ..._commonAttributes(),
+          });
+          addBreadcrumb(
+            'frozen_frame',
+            'Frozen frame: ${duration.inMilliseconds}ms',
+          );
+        } catch (_) {}
       },
     );
     _frameMetricsCollector!.start();
@@ -508,26 +631,30 @@ class ScoutFlutter {
 
     _nativeVitalsCollector = NativeVitalsCollector(
       onMemory: (usedBytes, maxBytes) {
-        if (!(_sessionManager?.isSampled ?? true)) return;
-        final attrs =
-            <String, Object>{
-              if (_navObserver?.currentScreenName != null)
-                'screen.name': _navObserver!.currentScreenName!,
-              if (_sessionManager != null)
-                'session.id': _sessionManager!.sessionId,
-            }.toAttributes();
-        memoryGauge.record(usedBytes.toDouble(), attrs);
+        try {
+          if (!(_sessionManager?.isSampled ?? true)) return;
+          final attrs =
+              <String, Object>{
+                if (_navObserver?.currentScreenName != null)
+                  'screen.name': _navObserver!.currentScreenName!,
+                if (_sessionManager != null)
+                  'session.id': _sessionManager!.sessionId,
+              }.toAttributes();
+          memoryGauge.record(usedBytes.toDouble(), attrs);
+        } catch (_) {}
       },
       onCpu: (cpuPercent) {
-        if (!(_sessionManager?.isSampled ?? true)) return;
-        final attrs =
-            <String, Object>{
-              if (_navObserver?.currentScreenName != null)
-                'screen.name': _navObserver!.currentScreenName!,
-              if (_sessionManager != null)
-                'session.id': _sessionManager!.sessionId,
-            }.toAttributes();
-        cpuGauge.record(cpuPercent, attrs);
+        try {
+          if (!(_sessionManager?.isSampled ?? true)) return;
+          final attrs =
+              <String, Object>{
+                if (_navObserver?.currentScreenName != null)
+                  'screen.name': _navObserver!.currentScreenName!,
+                if (_sessionManager != null)
+                  'session.id': _sessionManager!.sessionId,
+              }.toAttributes();
+          cpuGauge.record(cpuPercent, attrs);
+        } catch (_) {}
       },
     );
     _nativeVitalsCollector!.start();
@@ -579,48 +706,82 @@ class ScoutFlutter {
 
   static void _setupErrorHandlers() {
     FlutterError.onError = (details) {
-      FlutterError.presentError(details);
-      _breadcrumbManager.record(
-        'error',
-        'flutter_error: ${details.exceptionAsString()}',
-      );
-      FlutterOTel.reportError(
-        details.exceptionAsString(),
-        details.exception,
-        details.stack,
-        attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
-      );
+      try {
+        FlutterError.presentError(details);
+        _recordAndPersistBreadcrumb(
+          'error',
+          'flutter_error: ${details.exceptionAsString()}',
+        );
+        FlutterOTel.reportError(
+          details.exceptionAsString(),
+          details.exception,
+          details.stack,
+          attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
+        );
+      } catch (_) {
+        // Never crash the app due to telemetry failure.
+      }
     };
 
     PlatformDispatcher.instance.onError = (error, stack) {
-      _breadcrumbManager.record(
-        'error',
-        'uncaught_error: ${error.runtimeType}',
-      );
-      FlutterOTel.reportError(
-        'Uncaught error',
-        error,
-        stack,
-        attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
-      );
+      try {
+        _recordAndPersistBreadcrumb(
+          'error',
+          'uncaught_error: ${error.runtimeType}',
+        );
+        FlutterOTel.reportError(
+          'Uncaught error',
+          error,
+          stack,
+          attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
+        );
+      } catch (_) {
+        // Never crash the app due to telemetry failure.
+      }
       return true;
     };
   }
 
+  /// Get breadcrumbs JSON safely — never throws.
+  static String _safeBreadcrumbsJson() {
+    try {
+      return _breadcrumbManager.toJsonString();
+    } catch (_) {
+      return '[]';
+    }
+  }
+
+  /// Record a breadcrumb and persist to disk for crash survival.
+  static void _recordAndPersistBreadcrumb(String type, String message) {
+    try {
+      _breadcrumbManager.record(type, message);
+      _crashDetector?.persistBreadcrumbs(_safeBreadcrumbsJson());
+    } catch (_) {
+      // Never crash the app due to telemetry failure.
+    }
+  }
+
   /// Record a breadcrumb for error context.
   static void addBreadcrumb(String type, String message) {
-    _breadcrumbManager.record(type, message);
+    _recordAndPersistBreadcrumb(type, message);
   }
 
   /// Report an error manually.
   static void reportError(Object error, StackTrace? stackTrace) {
-    _breadcrumbManager.record('error', 'manual_error: ${error.runtimeType}');
-    FlutterOTel.reportError(
-      error.toString(),
-      error,
-      stackTrace,
-      attributes: {'breadcrumbs': _breadcrumbManager.toJsonString()},
-    );
+    try {
+      _recordAndPersistBreadcrumb(
+        'error',
+        'manual_error: ${error.runtimeType}',
+      );
+      FlutterOTel.reportError(
+        error.toString(),
+        error,
+        stackTrace,
+        attributes: {'breadcrumbs': _safeBreadcrumbsJson()},
+      );
+    } catch (_) {
+      // Never crash the app due to telemetry failure.
+    }
   }
 
   /// Set user identity. Attached to subsequent spans.
@@ -682,89 +843,93 @@ class ScoutFlutter {
       log(scout_log.LogLevel.error, message, attributes: attributes);
 
   static void _onHttpRequestCompleted(HttpRequestData data) {
-    if (!isInitialized) return;
-    if (!(_sessionManager?.isSampled ?? true)) return;
+    try {
+      if (!isInitialized) return;
+      if (!(_sessionManager?.isSampled ?? true)) return;
 
-    final attributes = _applyBeforeSend('span', 'http.request', {
-      'http.method': data.method,
-      'http.url': data.url.toString(),
-      'http.status_code': data.statusCode,
-      'http.response_content_length': data.responseSize,
-      'http.duration_ms': data.durationMs,
-      if (data.error != null) 'http.error': data.error!,
-      ..._commonAttributes(),
-    });
-    if (attributes == null) return;
+      final attributes = _applyBeforeSend('span', 'http.request', {
+        'http.method': data.method,
+        'http.url': data.url.toString(),
+        'http.status_code': data.statusCode,
+        'http.response_content_length': data.responseSize,
+        'http.duration_ms': data.durationMs,
+        if (data.error != null) 'http.error': data.error!,
+        ..._commonAttributes(),
+      });
+      if (attributes == null) return;
 
-    final span = FlutterOTel.tracer.startSpan(
-      'http.request',
-      attributes: attributes.isEmpty ? null : attributes.toAttributes(),
-    );
-    if (data.error != null) {
-      span.setStatus(SpanStatusCode.Error, data.error!);
-    }
-    span.end();
+      final span = FlutterOTel.tracer.startSpan(
+        'http.request',
+        attributes: attributes.isEmpty ? null : attributes.toAttributes(),
+      );
+      if (data.error != null) {
+        span.setStatus(SpanStatusCode.Error, data.error!);
+      }
+      span.end();
 
-    // Clear trace context now that the request is complete.
-    _activeTraceId = null;
-    _activeSpanId = null;
+      // Clear trace context now that the request is complete.
+      _activeTraceId = null;
+      _activeSpanId = null;
+    } catch (_) {}
   }
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
-    if (!(_sessionManager?.isSampled ?? true)) return;
+    try {
+      if (!(_sessionManager?.isSampled ?? true)) return;
 
-    final logAttrs = <String, Object>{
-      'session.id': _sessionManager?.sessionId ?? '',
-      if (_navObserver?.currentScreenName != null)
-        'screen.name': _navObserver!.currentScreenName!,
-      if (_userId != null) 'enduser.id': _userId!,
-      ...?entry.attributes,
-    };
-
-    // Apply beforeSend — user can modify message/attributes or drop the log.
-    String body = entry.message;
-    if (_config?.beforeSend != null) {
-      final event = <String, dynamic>{
-        'type': 'log',
-        'severity': entry.level.severityText,
-        'message': entry.message,
-        ...logAttrs,
+      final logAttrs = <String, Object>{
+        'session.id': _sessionManager?.sessionId ?? '',
+        if (_navObserver?.currentScreenName != null)
+          'screen.name': _navObserver!.currentScreenName!,
+        if (_userId != null) 'enduser.id': _userId!,
+        ...?entry.attributes,
       };
-      final result = _config!.beforeSend!(event);
-      if (result == null) return;
-      // Use possibly modified message
-      body = (result['message'] as String?) ?? entry.message;
-    }
 
-    final logRecord = ScoutLogRecord(
-      severityNumber: entry.level.severityNumber,
-      severityText: entry.level.severityText,
-      body: body,
-      timestampNanos:
-          BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
-          BigInt.from(1000),
-      attributes: logAttrs,
-      traceId: _activeTraceId,
-      spanId: _activeSpanId,
-    );
-    _logExporter
-        ?.export([logRecord])
-        .then((success) {
-          if (!success) {
-            _offlineQueue?.enqueue('logs', [
-              {
-                'severity_number': logRecord.severityNumber,
-                'severity_text': logRecord.severityText,
-                'body': logRecord.body,
-                'timestamp_nanos': logRecord.timestampNanos.toString(),
-                ...?logRecord.attributes,
-              },
-            ]);
-          }
-        })
-        .catchError((_) {
-          // Silently handle export errors
-        });
+      // Apply beforeSend — user can modify message/attributes or drop the log.
+      String body = entry.message;
+      if (_config?.beforeSend != null) {
+        final event = <String, dynamic>{
+          'type': 'log',
+          'severity': entry.level.severityText,
+          'message': entry.message,
+          ...logAttrs,
+        };
+        final result = _config!.beforeSend!(event);
+        if (result == null) return;
+        // Use possibly modified message
+        body = (result['message'] as String?) ?? entry.message;
+      }
+
+      final logRecord = ScoutLogRecord(
+        severityNumber: entry.level.severityNumber,
+        severityText: entry.level.severityText,
+        body: body,
+        timestampNanos:
+            BigInt.from(entry.timestamp.microsecondsSinceEpoch) *
+            BigInt.from(1000),
+        attributes: logAttrs,
+        traceId: _activeTraceId,
+        spanId: _activeSpanId,
+      );
+      _logExporter
+          ?.export([logRecord])
+          .then((success) {
+            if (!success) {
+              _offlineQueue?.enqueue('logs', [
+                {
+                  'severity_number': logRecord.severityNumber,
+                  'severity_text': logRecord.severityText,
+                  'body': logRecord.body,
+                  'timestamp_nanos': logRecord.timestampNanos.toString(),
+                  ...?logRecord.attributes,
+                },
+              ]);
+            }
+          })
+          .catchError((_) {
+            // Silently handle export errors
+          });
+    } catch (_) {}
   }
 
   static Future<void> _flushOfflineQueue() async {
@@ -852,5 +1017,6 @@ class ScoutFlutter {
     _flushing = false;
     _activeTraceId = null;
     _activeSpanId = null;
+    _crashDetector = null;
   }
 }
