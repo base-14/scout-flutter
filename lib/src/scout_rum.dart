@@ -421,6 +421,15 @@ class ScoutFlutter {
       name,
       attributes: filtered.isEmpty ? null : filtered.toAttributes(),
     );
+
+    // Set active trace context so logs emitted around the same time
+    // (e.g. debugPrint from error boundaries) get correlated.
+    try {
+      final ctx = span.spanContext;
+      _activeTraceId = ctx.traceId.toString();
+      _activeSpanId = ctx.spanId.toString();
+    } catch (_) {}
+
     span.end();
   }
 
