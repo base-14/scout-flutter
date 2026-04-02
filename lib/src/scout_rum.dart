@@ -43,8 +43,7 @@ class ScoutFlutter {
 
   static ScoutFlutterConfig? _config;
   static final BreadcrumbManager _breadcrumbManager = BreadcrumbManager();
-  static String? _userId;
-  static String? _userEmail;
+  static Map<String, Object> _userAttributes = {};
   static GlobalTapDetector? _tapDetector;
   static LongTaskDetector? _longTaskDetector;
   static AppLifecycleListener? _lifecycleListener;
@@ -827,21 +826,19 @@ class ScoutFlutter {
   }
 
   /// Set user identity. Attached to subsequent spans.
-  static void setUser({required String id, String? email}) {
-    _userId = id;
-    _userEmail = email;
+  /// [id] is required. Pass any additional attributes as key-value pairs.
+  static void setUser({required String id, Map<String, Object>? attributes}) {
+    _userAttributes = {'enduser.id': id, ...?attributes};
   }
 
   /// Clear user identity.
   static void clearUser() {
-    _userId = null;
-    _userEmail = null;
+    _userAttributes = {};
   }
 
   static Map<String, Object> _commonAttributes() {
     return {
-      if (_userId != null) 'enduser.id': _userId!,
-      if (_userEmail != null) 'enduser.email': _userEmail!,
+      ..._userAttributes,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
@@ -849,10 +846,11 @@ class ScoutFlutter {
   }
 
   /// Current user ID, if set.
-  static String? get userId => _userId;
+  static String? get userId => _userAttributes['enduser.id'] as String?;
 
-  /// Current user email, if set.
-  static String? get userEmail => _userEmail;
+  /// Current user attributes.
+  static Map<String, Object> get userAttributes =>
+      Map.unmodifiable(_userAttributes);
 
   /// Access the OTel tracer for custom spans.
   static dynamic get tracer => FlutterOTel.tracer;
@@ -923,7 +921,7 @@ class ScoutFlutter {
         'session.id': _sessionManager?.sessionId ?? '',
         if (_navObserver?.currentScreenName != null)
           'screen.name': _navObserver!.currentScreenName!,
-        if (_userId != null) 'enduser.id': _userId!,
+        ..._userAttributes,
         ...?entry.attributes,
       };
 
@@ -1021,8 +1019,7 @@ class ScoutFlutter {
   static void resetForTesting() {
     _config = null;
     _breadcrumbManager.clear();
-    _userId = null;
-    _userEmail = null;
+    _userAttributes = {};
     _tapDetector?.stop();
     _tapDetector = null;
     _longTaskDetector?.stop();

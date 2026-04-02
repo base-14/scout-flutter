@@ -13,7 +13,7 @@ dependencies:
   scout_flutter:
     git:
       url: https://github.com/base-14/scout_flutter.git
-      ref: v0.1.1
+      ref: v0.1.2
 
 Then run: flutter pub get
 

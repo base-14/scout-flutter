@@ -1,3 +1,8 @@
+## 0.1.2
+
+### Changes
+- `setUser` now accepts arbitrary attributes via `Map<String, Object>` instead of only `id` and `email`
+
 ## 0.1.1
 
 ### Fixes
