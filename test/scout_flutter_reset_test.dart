@@ -7,7 +7,10 @@ void main() {
   group('ScoutFlutter.resetForTesting', () {
     test('clears all state', () {
       // Set some state
-      ScoutFlutter.setUser(id: 'user-1', attributes: {'enduser.email': 'test@example.com'});
+      ScoutFlutter.setUser(
+        id: 'user-1',
+        attributes: {'enduser.email': 'test@example.com'},
+      );
       expect(ScoutFlutter.userId, 'user-1');
       expect(ScoutFlutter.userAttributes['enduser.email'], 'test@example.com');
 

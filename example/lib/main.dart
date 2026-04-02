@@ -83,7 +83,10 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 12),
           TextButton(
             onPressed: () {
-              ScoutFlutter.setUser(id: 'user-42', attributes: {'enduser.email': 'test@example.com'});
+              ScoutFlutter.setUser(
+                id: 'user-42',
+                attributes: {'enduser.email': 'test@example.com'},
+              );
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('User identity set')),
               );
