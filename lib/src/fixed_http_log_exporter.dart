@@ -108,7 +108,7 @@ class FixedHttpLogExporter {
     // Fix: create a new InstrumentationScope instead of mutating the frozen default.
     final scope = common_pb.InstrumentationScope();
     scope.name = 'scout_flutter';
-    scope.version = '0.1.0';
+    scope.version = '0.1.1';
     scopeLogs.scope = scope;
 
     for (final log in logs) {

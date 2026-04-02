@@ -11,7 +11,7 @@ dependencies:
   scout_flutter:
     git:
       url: https://github.com/base-14/scout_flutter.git
-      ref: v0.1.0
+      ref: v0.1.1
 ```
 
 ### 2. Initialize in main()

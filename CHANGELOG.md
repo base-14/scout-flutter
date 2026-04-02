@@ -1,4 +1,9 @@
-## 0.1.0 (unreleased)
+## 0.1.1
+
+### Fixes
+- Bump CMake version to 3.18.1+ for AGP 8.9.1 compatibility (File API requirement)
+
+## 0.1.0
 
 ### Crash Detection & SDK Hardening
 - Three-layer crash detection: session marker (OOM/SIGKILL), native exception handlers (JVM/NSException), signal handlers (SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP)
