@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
@@ -280,15 +281,48 @@ class ScoutFlutter {
     try {
       final previousCrash = await _crashDetector?.checkPreviousCrash();
       if (previousCrash != null) {
+        // Extract error details from breadcrumbs for a self-contained crash span.
+        String? lastErrorType;
+        String? lastErrorMessage;
+        if (previousCrash.breadcrumbs != null) {
+          try {
+            final crumbs = json.decode(previousCrash.breadcrumbs!) as List;
+            for (var i = crumbs.length - 1; i >= 0; i--) {
+              final c = crumbs[i] as Map<String, dynamic>;
+              if (c['type'] == 'error') {
+                final msg = c['message'] as String? ?? '';
+                // Breadcrumb message format: "flutter_error: <exception>"
+                final colonIdx = msg.indexOf(': ');
+                if (colonIdx > 0) {
+                  lastErrorType = msg.substring(0, colonIdx);
+                  lastErrorMessage = msg.substring(colonIdx + 2);
+                } else {
+                  lastErrorType = 'error';
+                  lastErrorMessage = msg;
+                }
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+
+        // Use the CRASHED session's ID and timestamp, not the new session.
+        final crashTime = previousCrash.lastActiveAt ?? previousCrash.startedAt;
         _emitSpan('app_crash', {
+          'session.id': previousCrash.sessionId,
           'crash.previous_session_id': previousCrash.sessionId,
           'crash.started_at': previousCrash.startedAt.toIso8601String(),
+          'crash.timestamp': crashTime.toIso8601String(),
           'crash.status': previousCrash.status,
           if (previousCrash.lastScreen != null)
             'crash.last_screen': previousCrash.lastScreen!,
+          if (lastErrorType != null) 'error.type': lastErrorType,
+          if (lastErrorMessage != null) 'error.message': lastErrorMessage,
           if (previousCrash.breadcrumbs != null)
             'breadcrumbs': previousCrash.breadcrumbs!,
-          ..._commonAttributes(),
+          ..._userAttributes,
+          if (_connectivityType != 'unknown')
+            'network.connection.type': _connectivityType,
         });
       }
       await _crashDetector?.markSessionStarted(
@@ -746,6 +780,7 @@ class ScoutFlutter {
           'error.message': details.exception.toString(),
           'error.stack_trace': details.stack?.toString() ?? '',
           'error.library': details.library ?? '',
+          'error.handled': 'true',
           'breadcrumbs': _safeBreadcrumbsJson(),
           ..._commonAttributes(),
         });
@@ -772,6 +807,7 @@ class ScoutFlutter {
           'error.type': 'uncaught_error',
           'error.message': error.toString(),
           'error.stack_trace': stack.toString(),
+          'error.handled': 'false',
           'breadcrumbs': _safeBreadcrumbsJson(),
           ..._commonAttributes(),
         });

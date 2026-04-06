@@ -46,11 +46,16 @@ class CrashDetector {
         }
       } catch (_) {}
 
+      final lastActiveMs = data['last_active_at'] as int?;
       final report = CrashReport(
         sessionId: data['session_id'] as String? ?? 'unknown',
         startedAt: DateTime.fromMillisecondsSinceEpoch(
           data['started_at'] as int? ?? 0,
         ),
+        lastActiveAt:
+            lastActiveMs != null
+                ? DateTime.fromMillisecondsSinceEpoch(lastActiveMs)
+                : null,
         lastScreen: data['last_screen'] as String?,
         status: status ?? 'unknown',
         breadcrumbs: breadcrumbs,
@@ -72,9 +77,11 @@ class CrashDetector {
     required String sessionId,
     String? screen,
   }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
     await _write({
       'session_id': sessionId,
-      'started_at': DateTime.now().millisecondsSinceEpoch,
+      'started_at': now,
+      'last_active_at': now,
       'status': 'started',
       if (screen != null) 'last_screen': screen,
     });
@@ -120,6 +127,7 @@ class CrashDetector {
       final data =
           json.decode(await file.readAsString()) as Map<String, dynamic>;
       data['status'] = status;
+      data['last_active_at'] = DateTime.now().millisecondsSinceEpoch;
       await _write(data);
     } catch (_) {}
   }
@@ -138,6 +146,7 @@ class CrashDetector {
 class CrashReport {
   final String sessionId;
   final DateTime startedAt;
+  final DateTime? lastActiveAt;
   final String? lastScreen;
   final String status;
   final String? breadcrumbs;
@@ -145,6 +154,7 @@ class CrashReport {
   CrashReport({
     required this.sessionId,
     required this.startedAt,
+    this.lastActiveAt,
     this.lastScreen,
     required this.status,
     this.breadcrumbs,

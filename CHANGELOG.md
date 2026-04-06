@@ -1,3 +1,12 @@
+## 0.1.3
+
+### Fixes
+- Crash span now uses the crashed session's ID, not the new session
+- Crash timestamp set to last known active time before crash
+- Error details (type, message) extracted from breadcrumbs into crash span
+- `error.handled` flag distinguishes framework-caught vs uncaught errors
+- `last_active_at` persisted on every lifecycle status change for crash timing
+
 ## 0.1.2
 
 ### Changes
