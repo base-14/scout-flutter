@@ -17,6 +17,8 @@ import 'package:dartastic_opentelemetry/proto/logs/v1/logs.pbenum.dart'
 import 'package:fixnum/fixnum.dart';
 import 'package:http/http.dart' as http;
 
+import 'scope.dart';
+
 /// A log record to be exported via OTLP.
 class ScoutLogRecord {
   final int severityNumber;
@@ -107,8 +109,8 @@ class FixedHttpLogExporter {
 
     // Fix: create a new InstrumentationScope instead of mutating the frozen default.
     final scope = common_pb.InstrumentationScope();
-    scope.name = 'scout_flutter';
-    scope.version = '0.1.3';
+    scope.name = kScopeName;
+    scope.version = kScopeVersion;
     scopeLogs.scope = scope;
 
     for (final log in logs) {

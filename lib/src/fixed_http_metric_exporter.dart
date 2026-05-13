@@ -16,6 +16,8 @@ import 'package:dartastic_opentelemetry/proto/metrics/v1/metrics.pb.dart'
     as metrics_pb;
 import 'package:http/http.dart' as http;
 
+import 'scope.dart';
+
 /// A fixed version of OtlpHttpMetricExporter that correctly creates
 /// InstrumentationScope as a new message instead of mutating the frozen default.
 ///
@@ -85,8 +87,8 @@ class FixedHttpMetricExporter implements MetricExporter {
 
     // Fix: create a new InstrumentationScope instead of mutating the frozen default.
     final scope = common_pb.InstrumentationScope();
-    scope.name = '@dart/dartastic_opentelemetry';
-    scope.version = '1.0.0';
+    scope.name = kScopeName;
+    scope.version = kScopeVersion;
     scopeMetrics.scope = scope;
 
     for (final metric in metrics.metrics) {

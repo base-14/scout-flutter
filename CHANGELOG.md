@@ -1,3 +1,8 @@
+## 0.1.4
+
+### Changes
+- All spans, metrics, and logs are now emitted under a single InstrumentationScope `base14.scout.flutter` (previously varied by signal type)
+
 ## 0.1.3
 
 ### Fixes

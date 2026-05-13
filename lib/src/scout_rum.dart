@@ -20,6 +20,7 @@ import 'native_vitals_collector.dart';
 import 'offline_queue.dart';
 import 'scout_dio_interceptor.dart';
 import 'scout_http_overrides.dart';
+import 'scope.dart';
 import 'scout_logger.dart' as scout_log;
 import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
@@ -202,7 +203,8 @@ class ScoutFlutter {
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
       serviceVersion: config.serviceVersion,
-      tracerName: config.serviceName,
+      tracerName: kScopeName,
+      tracerVersion: kScopeVersion,
       endpoint: httpEndpoint,
       secure: config.secure,
       enableMetrics: config.enablePerformanceMetrics,
@@ -240,7 +242,7 @@ class ScoutFlutter {
     }
 
     if (config.enablePerformanceMetrics) {
-      _meter = FlutterOTel.meter(name: config.serviceName);
+      _meter = FlutterOTel.meter(name: kScopeName, version: kScopeVersion);
       _setupFrameMetrics();
       _setupNativeVitals();
     }
@@ -656,7 +658,8 @@ class ScoutFlutter {
     // Get the SDK Meter directly, bypassing UIMeter which has a broken
     // createGauge cast (UIMeter casts APIGauge as Gauge, which fails).
     final sdkMeter = FlutterOTel.meterProvider.delegate.getMeter(
-      name: _config!.serviceName,
+      name: kScopeName,
+      version: kScopeVersion,
     );
 
     final memoryGauge = sdkMeter.createGauge<double>(
