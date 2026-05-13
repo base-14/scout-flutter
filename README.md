@@ -10,8 +10,8 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. Install the pa
 dependencies:
   scout_flutter:
     git:
-      url: https://github.com/base-14/scout_flutter.git
-      ref: v0.1.3
+      url: https://github.com/base-14/scout-flutter.git
+      ref: v0.1.4
 ```
 
 ### 2. Initialize in main()

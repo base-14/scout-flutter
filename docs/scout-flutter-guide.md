@@ -12,8 +12,8 @@ In your app's pubspec.yaml:
 dependencies:
   scout_flutter:
     git:
-      url: https://github.com/base-14/scout_flutter.git
-      ref: v0.1.3
+      url: https://github.com/base-14/scout-flutter.git
+      ref: v0.1.4
 
 Then run: flutter pub get
 
