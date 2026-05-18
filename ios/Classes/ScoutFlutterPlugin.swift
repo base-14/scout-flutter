@@ -2,7 +2,8 @@ import Flutter
 
 public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel
-    private var hangWatchdog: AppHangWatchdog?
+    private var anrWatchdog: AppHangWatchdog?
+    private var uiHangWatchdog: AppHangWatchdog?
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -14,6 +15,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
 
         // Install crash handlers as early as possible.
         CrashReporter.install()
+        // Subscribe to MetricKit so delayed crash/hang payloads queue
+        // up in memory until the Dart side drains them.
+        ScoutMetricKitSubscriber.shared.start()
     }
 
     init(channel: FlutterMethodChannel) {
@@ -26,23 +30,60 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         case "startAnrDetection":
             let args = call.arguments as? [String: Any]
             let thresholdMs = args?["thresholdMs"] as? Int ?? 5000
-            hangWatchdog?.stop()
-            hangWatchdog = AppHangWatchdog(thresholdMs: thresholdMs) { [weak self] durationMs in
+            anrWatchdog?.stop()
+            anrWatchdog = AppHangWatchdog(
+                label: "anr",
+                thresholdMs: thresholdMs
+            ) { [weak self] durationMs in
                 DispatchQueue.main.async {
                     self?.channel.invokeMethod("onAnrDetected", arguments: durationMs)
                 }
             }
-            hangWatchdog?.start()
+            anrWatchdog?.start()
             result(nil)
         case "stopAnrDetection":
-            hangWatchdog?.stop()
-            hangWatchdog = nil
+            anrWatchdog?.stop()
+            anrWatchdog = nil
+            result(nil)
+        case "startUiHangDetection":
+            // Separate watchdog from ANR — fires at ~250 ms to catch
+            // micro-stutters (button tap → 300 ms freeze → recover).
+            // KSCrash's mainThreadDeadlock only fires at 5 s; this fills
+            // the gap.
+            let args = call.arguments as? [String: Any]
+            let thresholdMs = args?["thresholdMs"] as? Int ?? 250
+            uiHangWatchdog?.stop()
+            uiHangWatchdog = AppHangWatchdog(
+                label: "ui_hang",
+                thresholdMs: thresholdMs,
+                pollIntervalMs: max(20, thresholdMs / 4)
+            ) { [weak self] durationMs in
+                DispatchQueue.main.async {
+                    self?.channel.invokeMethod("onUiHangDetected", arguments: durationMs)
+                }
+            }
+            uiHangWatchdog?.start()
+            result(nil)
+        case "stopUiHangDetection":
+            uiHangWatchdog?.stop()
+            uiHangWatchdog = nil
             result(nil)
         case "simulateAnr":
             let args = call.arguments as? [String: Any]
             let durationMs = args?["durationMs"] as? Int ?? 6000
             // Block native main thread to trigger the ANR watchdog
             Thread.sleep(forTimeInterval: Double(durationMs) / 1000.0)
+            result(nil)
+        case "simulateCrash":
+            // Real crash so KSCrash actually fires. Dart `exit(0/1)` is a
+            // graceful shutdown that no crash reporter intercepts.
+            // The dispatch.async hop keeps Flutter's method-channel
+            // accounting from screaming about a missing result().
+            DispatchQueue.main.async {
+                // Null-pointer write — synthesises EXC_BAD_ACCESS / SIGSEGV.
+                let ptr: UnsafeMutablePointer<Int32>? = nil
+                ptr!.pointee = 0
+            }
             result(nil)
         case "getMemoryUsage":
             var info = mach_task_basic_info()
@@ -83,6 +124,10 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
 
         case "getNativeCrashReports":
             let reports = CrashReporter.getPendingCrashReports()
+            result(reports)
+
+        case "getMetricKitReports":
+            let reports = ScoutMetricKitSubscriber.shared.drainPending()
             result(reports)
 
         default:

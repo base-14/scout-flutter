@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'scout_rum_config.dart';
 import 'user_action_annotation.dart';
+import 'uuid.dart';
 
 const _tapSlop = 20;
 const _tapSlopSquared = _tapSlop * _tapSlop;
@@ -12,12 +13,14 @@ class _ElementDescription {
   final Element element;
   final String elementName;
   final String elementDescription;
+  final String nameSource;
   final bool tryForBetter;
 
   const _ElementDescription({
     required this.element,
     required this.elementName,
     required this.elementDescription,
+    required this.nameSource,
     this.tryForBetter = false,
   });
 
@@ -37,14 +40,46 @@ class _ElementDescription {
 class _TreeAnnotation {
   final String? description;
   final Map<String, Object?>? attributes;
-  const _TreeAnnotation(this.description, [this.attributes]);
+
+  /// Where the description came from:
+  ///   'standard_attribute' — RumUserActionAnnotation / Semantics / Icon.semanticLabel
+  ///   'text_content'       — Text widget's `data` field
+  ///   'blank'              — none of the above; description is null / 'unknown'
+  final String source;
+  const _TreeAnnotation(this.description, this.source, [this.attributes]);
+}
+
+/// Tap details handed to [GlobalTapDetector.onTapDetected].
+class TapDetails {
+  final String elementName;
+  final String elementDescription;
+
+  /// 'standard_attribute' (a11y label / annotation), 'text_content'
+  /// (matched Text widget), or 'blank' (nothing usable found).
+  final String nameSource;
+
+  /// Stable hash of the widget-runtime-type chain from the tapped
+  /// element up to the root. Lets a backend group taps on the "same"
+  /// element across sessions / re-renders without needing to know the
+  /// component name.
+  final String permanentId;
+
+  /// Global tap position in logical pixels.
+  final Offset position;
+
+  const TapDetails({
+    required this.elementName,
+    required this.elementDescription,
+    required this.nameSource,
+    required this.permanentId,
+    required this.position,
+  });
 }
 
 /// Detects taps globally via [GestureBinding.pointerRouter].
 /// No widget wrapper needed — just call [start] after binding is initialized.
 class GlobalTapDetector {
-  final void Function(String elementName, String elementDescription)
-  onTapDetected;
+  final void Function(TapDetails details) onTapDetected;
   final CustomGestureElementDetector? customGestureDetector;
   final _pointerDownPositions = <int, Offset>{};
 
@@ -77,8 +112,30 @@ class GlobalTapDetector {
   void _detectTapAt(Offset globalPosition) {
     final description = _detectElementAtPosition(globalPosition);
     if (description != null) {
-      onTapDetected(description.elementName, description.elementDescription);
+      onTapDetected(
+        TapDetails(
+          elementName: description.elementName,
+          elementDescription: description.elementDescription,
+          nameSource: description.nameSource,
+          permanentId: _buildPermanentId(description.element),
+          position: globalPosition,
+        ),
+      );
     }
+  }
+
+  /// djb2-hash of the widget runtime-type chain (deepest first, up to
+  /// 8 ancestors). Stable across re-renders and builds — different
+  /// elements with the same lineage produce the same hash, which is
+  /// exactly the grouping behaviour `target.permanent_id` is meant to
+  /// give backend dashboards.
+  String _buildPermanentId(Element element) {
+    final parts = <String>[element.widget.runtimeType.toString()];
+    element.visitAncestorElements((ancestor) {
+      parts.add(ancestor.widget.runtimeType.toString());
+      return parts.length < 8;
+    });
+    return djb2Hash(parts.reversed.join('>'));
   }
 
   _ElementDescription? _detectElementAtPosition(Offset globalPosition) {
@@ -106,7 +163,11 @@ class GlobalTapDetector {
 
       final w = element.widget;
       if (w is RumUserActionAnnotation) {
-        treeAnnotation = _TreeAnnotation(w.description, w.attributes);
+        treeAnnotation = _TreeAnnotation(
+          w.description,
+          'standard_attribute',
+          w.attributes,
+        );
       } else {
         final candidate = _classifyElement(element, treeAnnotation);
         if (candidate != null && candidate.betterThan(best)) {
@@ -130,6 +191,7 @@ class GlobalTapDetector {
           element: best!.element,
           elementName: best!.elementName,
           elementDescription: fallback!.description!,
+          nameSource: fallback.source,
           tryForBetter: false,
         );
       }
@@ -141,6 +203,7 @@ class GlobalTapDetector {
   _TreeAnnotation? _findInnerText(Element element, bool allowText) {
     String? description;
     Map<String, Object?>? attributes;
+    String source = 'blank';
     bool stopSiblings = false;
 
     void visitor(Element el) {
@@ -151,21 +214,25 @@ class GlobalTapDetector {
       if (w is RumUserActionAnnotation) {
         description = w.description;
         attributes = w.attributes;
+        source = 'standard_attribute';
         stop = true;
         stopSiblings = true;
       } else if (allowText && w is Text) {
         if (w.data?.isNotEmpty ?? false) {
           description = w.data!;
+          source = 'text_content';
           stop = true;
         }
       } else if (w is Semantics) {
         if (w.properties.label?.isNotEmpty ?? false) {
           description = w.properties.label!;
+          source = 'standard_attribute';
           stop = true;
         }
       } else if (w is Icon) {
         if (w.semanticLabel?.isNotEmpty ?? false) {
           description = w.semanticLabel!;
+          source = 'standard_attribute';
           stop = true;
         }
       }
@@ -176,7 +243,7 @@ class GlobalTapDetector {
     }
 
     element.visitChildren(visitor);
-    return _TreeAnnotation(description, attributes);
+    return _TreeAnnotation(description, source, attributes);
   }
 
   _ElementDescription? _classifyElement(
@@ -210,7 +277,9 @@ class GlobalTapDetector {
       if (w.onTap != null) name = 'BottomNavigationBarItem';
     } else if (w is Radio) {
       name = 'Radio';
-      treeAnnotation ??= _TreeAnnotation(w.value?.toString());
+      // Use the radio's value as the description; mark as a derived
+      // attribute rather than an explicit a11y label.
+      treeAnnotation ??= _TreeAnnotation(w.value?.toString(), 'text_content');
     } else if (w is Switch) {
       name = 'Switch';
     } else if (w is InkWell) {
@@ -230,10 +299,13 @@ class GlobalTapDetector {
     if (name != null) {
       final annotation =
           treeAnnotation ?? _findInnerText(element, searchForText);
+      final desc = annotation?.description ?? 'unknown';
       return _ElementDescription(
         element: element,
         elementName: name,
-        elementDescription: annotation?.description ?? 'unknown',
+        elementDescription: desc,
+        nameSource:
+            desc == 'unknown' ? 'blank' : (annotation?.source ?? 'blank'),
         tryForBetter: searchForBetter,
       );
     }

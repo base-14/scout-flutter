@@ -55,6 +55,17 @@ class ScoutFlutterConfig {
   /// Values below 1000 are clamped to 1000.
   final int anrThresholdMs;
 
+  /// iOS only — threshold in milliseconds for sub-ANR UI hangs detected
+  /// by a continuous CFRunLoop watchdog. Fires `ui_hang` spans for any
+  /// main-thread block longer than this, complementing the slower ANR
+  /// detector and KSCrash's mainThreadDeadlock monitor (which only
+  /// fires at 5 s+).
+  ///
+  /// Default 250 (Apple's hang-detector baseline). Min 50 (anything
+  /// lower is noise — animation frames take ~16 ms). Set to 0 to
+  /// disable while keeping ANR detection on.
+  final int iosHangThresholdMs;
+
   /// Whether to track app startup time (cold and warm start).
   final bool enableStartupTracking;
 
@@ -89,6 +100,19 @@ class ScoutFlutterConfig {
   /// Max offline storage in MB for failed exports. Default 5.
   final int maxOfflineStorageMb;
 
+  /// Disable on-disk offline buffering — strict at-most-once delivery.
+  /// Default true. When false, retry-exhausted batches are dropped
+  /// instead of being persisted for the next launch's replay.
+  final bool offlineBufferEnabled;
+
+  /// Per-signal item caps. Oldest batches FIFO-evicted first when a
+  /// cap is exceeded. Defaults: traces 5000, metrics 2000, logs 5000.
+  /// Use these for predictable storage budgets — the `maxOfflineStorageMb`
+  /// cap is a coarse safety net that runs in addition.
+  final int offlineMaxTraceItems;
+  final int offlineMaxMetricItems;
+  final int offlineMaxLogItems;
+
   /// Callback to filter/modify events before export.
   final BeforeSendCallback? beforeSend;
 
@@ -108,6 +132,7 @@ class ScoutFlutterConfig {
     int longTaskThresholdMs = 100,
     this.enableAnrDetection = true,
     int anrThresholdMs = 5000,
+    int iosHangThresholdMs = 250,
     this.enableStartupTracking = true,
     this.enableConnectivityTracking = true,
     this.headers,
@@ -119,10 +144,18 @@ class ScoutFlutterConfig {
     this.enableLogging = true,
     this.capturePrintStatements = false,
     this.maxOfflineStorageMb = 5,
+    this.offlineBufferEnabled = true,
+    this.offlineMaxTraceItems = 5000,
+    this.offlineMaxMetricItems = 2000,
+    this.offlineMaxLogItems = 5000,
     this.beforeSend,
   }) : longTaskThresholdMs =
            longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,
+       iosHangThresholdMs =
+           iosHangThresholdMs <= 0
+               ? 0
+               : (iosHangThresholdMs < 50 ? 50 : iosHangThresholdMs),
        sessionSampleRate =
            sessionSampleRate < 0.0
                ? 0.0

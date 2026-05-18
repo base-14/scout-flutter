@@ -76,9 +76,29 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     result.success(mapOf("ticks" to -1L))
                 }
             }
+            "simulateCrash" -> {
+                // Force a real native crash so the NDK signal handler /
+                // ApplicationExitInfo path fires. Dart `exit()` is graceful
+                // and no crash reporter intercepts it.
+                Thread {
+                    Thread.sleep(50) // let the method-channel reply land
+                    @Suppress("RemoveExplicitTypeArguments")
+                    val obj: String? = null
+                    obj!!.length // NullPointerException → JVM uncaught handler
+                }.start()
+                result.success(null)
+            }
             "getNativeCrashReports" -> {
                 val reports = CrashReporter.getPendingCrashReports()
                 result.success(reports)
+            }
+            "getExitInfoReports" -> {
+                val ctx = context
+                if (ctx == null) {
+                    result.success(emptyList<Map<String, Any>>())
+                } else {
+                    result.success(ExitInfoCollector.collect(ctx))
+                }
             }
             else -> result.notImplemented()
         }

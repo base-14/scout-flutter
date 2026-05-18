@@ -18,12 +18,13 @@ void main() {
 
     test('forbids any other InstrumentationScope name anywhere in lib/', () {
       final libRoot = Directory('lib');
-      final dartFiles = libRoot
-          .listSync(recursive: true)
-          .whereType<File>()
-          .where((f) => f.path.endsWith('.dart'))
-          .where((f) => !f.path.endsWith('scope.dart'))
-          .toList();
+      final dartFiles =
+          libRoot
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.dart'))
+              .where((f) => !f.path.endsWith('scope.dart'))
+              .toList();
 
       final violations = <String>[];
 
@@ -36,8 +37,9 @@ void main() {
       final tracerNameRe = RegExp(r'tracerName\s*:\s*([^,)\n]+)');
       final tracerVersionRe = RegExp(r'tracerVersion\s*:\s*([^,)\n]+)');
       final meterNameRe = RegExp(r'\bgetMeter\s*\(\s*name\s*:\s*([^,)\n]+)');
-      final flutterMeterRe =
-          RegExp(r'FlutterOTel\.meter\s*\(\s*name\s*:\s*([^,)\n]+)');
+      final flutterMeterRe = RegExp(
+        r'FlutterOTel\.meter\s*\(\s*name\s*:\s*([^,)\n]+)',
+      );
       final scopeNameAssignRe = RegExp(r'\bscope\.name\s*=\s*([^;\n]+);');
       final scopeVersionAssignRe = RegExp(r'\bscope\.version\s*=\s*([^;\n]+);');
 
@@ -57,8 +59,10 @@ void main() {
         if (m == null) return;
         final actual = m.group(1)!.trim();
         if (actual != expected) {
-          violations.add('  $path:$lineNo  $label uses `$actual` '
-              '(must be `$expected`)');
+          violations.add(
+            '  $path:$lineNo  $label uses `$actual` '
+            '(must be `$expected`)',
+          );
         }
       }
 
@@ -68,15 +72,39 @@ void main() {
         for (var i = 0; i < lines.length; i++) {
           final line = lines[i];
           check(tracerNameRe, 'tracerName', 'kScopeName', rel, i + 1, line);
-          check(tracerVersionRe, 'tracerVersion', 'kScopeVersion', rel, i + 1,
-              line);
+          check(
+            tracerVersionRe,
+            'tracerVersion',
+            'kScopeVersion',
+            rel,
+            i + 1,
+            line,
+          );
           check(meterNameRe, 'getMeter(name:', 'kScopeName', rel, i + 1, line);
-          check(flutterMeterRe, 'FlutterOTel.meter(name:', 'kScopeName', rel,
-              i + 1, line);
-          check(scopeNameAssignRe, 'scope.name =', 'kScopeName', rel, i + 1,
-              line);
-          check(scopeVersionAssignRe, 'scope.version =', 'kScopeVersion', rel,
-              i + 1, line);
+          check(
+            flutterMeterRe,
+            'FlutterOTel.meter(name:',
+            'kScopeName',
+            rel,
+            i + 1,
+            line,
+          );
+          check(
+            scopeNameAssignRe,
+            'scope.name =',
+            'kScopeName',
+            rel,
+            i + 1,
+            line,
+          );
+          check(
+            scopeVersionAssignRe,
+            'scope.version =',
+            'kScopeVersion',
+            rel,
+            i + 1,
+            line,
+          );
         }
       }
 

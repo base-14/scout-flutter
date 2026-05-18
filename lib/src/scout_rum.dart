@@ -28,6 +28,8 @@ import 'session_manager.dart';
 import 'breadcrumb_manager.dart';
 import 'crash_detector.dart';
 import 'global_tap_detector.dart';
+import 'scroll_observer.dart';
+import 'uuid.dart';
 
 /// Main entry point for Scout Flutter RUM.
 ///
@@ -49,7 +51,13 @@ class ScoutFlutter {
   static GlobalTapDetector? _tapDetector;
   static LongTaskDetector? _longTaskDetector;
   static AppLifecycleListener? _lifecycleListener;
-  static AutoNameNavigatorObserver? _navObserver;
+
+  /// Mirror of the most recently entered screen, updated by any
+  /// observer instance returned from `navigatorObserver`. Decoupled
+  /// from a specific observer so apps with nested Navigators (e.g.
+  /// CupertinoTabView per tab) can attach a fresh observer to each
+  /// without Flutter's "observer already has a navigator" assertion.
+  static String? _currentScreenName;
   static FrameMetricsCollector? _frameMetricsCollector;
   static NativeVitalsCollector? _nativeVitalsCollector;
   static Stopwatch? _coldStartStopwatch;
@@ -70,6 +78,34 @@ class ScoutFlutter {
   static String? _activeTraceId;
   static String? _activeSpanId;
   static CrashDetector? _crashDetector;
+  // Cross-session stable identifier — persisted to disk on first init,
+  // hydrated on every subsequent launch. Attached as `enduser.anonymous_id`
+  // on every span so backends can group sessions by user without
+  // requiring an authenticated identity. Cleared by `clearUser()`.
+  static String? _anonymousId;
+  // Wall-clock when `initialize()` was called. Used for the
+  // `error.time_since_app_start_ms` attribute so a backend can tell
+  // crash-at-launch from crash-during-session at a glance.
+  static int? _appStartedAtMs;
+  // Most recent navigation. Fed into `view.referrer` on the next
+  // screen_view emission. Reset on `clearUser()`-style scope flush.
+  static String? _previousScreenName;
+  static bool _hasNavigated = false;
+  // Latest aggregated scroll metrics for the active screen. Decorated
+  // onto the next emitted span via `_commonAttributes`. Reset on
+  // navigation so each screen reports its own depth.
+  static ScoutScrollMetrics? _latestScroll;
+  // For INV (Interaction to Next View) vital — timestamp of the most
+  // recent user_interaction and the screen it happened on. When a
+  // screen_view fires soon after on a *different* screen, the delta
+  // is the user-perceived navigation latency.
+  static int? _lastInteractionAtMs;
+  static String? _lastInteractionScreen;
+  // Window after a tap during which a subsequent screen_view is
+  // considered the navigation result of that tap. Anything later is
+  // discarded — the user probably tapped, did something else, then
+  // navigated by other means.
+  static const int _invWindowMs = 5000;
 
   /// Current config, or null if not initialized.
   static ScoutFlutterConfig? get config => _config;
@@ -82,6 +118,23 @@ class ScoutFlutter {
 
   /// Current session ID.
   static String? get sessionId => _sessionManager?.sessionId;
+
+  /// Stable per-install anonymous identifier (UUID v4), persisted to
+  /// the temp directory and reused across launches until the install
+  /// is removed. Exposed for the WebView bridge so embedded web pages
+  /// can adopt the native identity.
+  static String? get anonymousId => _anonymousId;
+
+  /// Re-emit a span received from a bridged WebView. Used by
+  /// `ScoutWebViewBridge`; not a stable public API for app code.
+  ///
+  /// Native common attributes (session_id, device.*, app.*, etc.) are
+  /// merged on top so all spans share the native session even if the
+  /// web payload carried its own. `span.source = "webview"` should be
+  /// set by the caller.
+  static void emitBridgedSpan(String type, Map<String, Object> attributes) {
+    _emitSpan(type, {...attributes, ..._commonAttributes()});
+  }
 
   /// Dio interceptor for custom Dio adapter users.
   static ScoutDioInterceptor get dioInterceptor {
@@ -96,16 +149,52 @@ class ScoutFlutter {
     return _dioInterceptor!;
   }
 
-  /// Navigator observer for automatic screen tracking.
-  /// Add this to your MaterialApp/CupertinoApp's navigatorObservers.
+  /// Navigator observer for automatic screen tracking. Returns a
+  /// fresh instance on every read so the same SDK can be attached to
+  /// multiple `Navigator`s — root + per-tab CupertinoTabView, nested
+  /// modal navigators, etc. All instances funnel events into shared
+  /// static state so dashboards see one coherent screen timeline.
   static NavigatorObserver get navigatorObserver {
-    _navObserver ??= AutoNameNavigatorObserver(
+    return AutoNameNavigatorObserver(
       onScreenChanged: (screenName) {
         try {
+          _currentScreenName = screenName;
+          final isFirst = !_hasNavigated;
+          _hasNavigated = true;
           _emitSpan('screen_view', {
             'screen.name': screenName,
+            'view.id': uuidV4(),
+            'view.loading_type': isFirst ? 'initial_load' : 'route_change',
+            'view.is_active': true,
+            if (_previousScreenName != null && !isFirst)
+              'view.referrer': _previousScreenName!,
             ..._commonAttributes(),
           });
+          // INV (Interaction to Next View) — if a tap happened on the
+          // outgoing screen within the window, the elapsed time to
+          // this new screen is the navigation latency the user felt.
+          final tapAt = _lastInteractionAtMs;
+          final tapScreen = _lastInteractionScreen;
+          if (tapAt != null && tapScreen != null && tapScreen != screenName) {
+            final invMs = DateTime.now().millisecondsSinceEpoch - tapAt;
+            if (invMs >= 0 && invMs <= _invWindowMs) {
+              _emitVital(
+                'inv',
+                durationMs: invMs,
+                type: 'navigation',
+                extra: {
+                  'vital.from_screen': tapScreen,
+                  'vital.to_screen': screenName,
+                },
+              );
+            }
+          }
+          _lastInteractionAtMs = null;
+          _lastInteractionScreen = null;
+
+          _previousScreenName = screenName;
+          _latestScroll = null;
+          ScoutScrollObserver.resetGlobal();
           _crashDetector?.updateLastScreen(screenName);
           addBreadcrumb('navigation', 'screen: $screenName');
         } catch (_) {}
@@ -139,7 +228,6 @@ class ScoutFlutter {
         } catch (_) {}
       },
     );
-    return _navObserver!;
   }
 
   /// Initialize Scout Flutter RUM. Call this in `main()` before `runApp()`.
@@ -153,6 +241,7 @@ class ScoutFlutter {
   /// navigatorObservers list.
   static Future<void> initialize({required ScoutFlutterConfig config}) async {
     _coldStartStopwatch ??= Stopwatch()..start();
+    _appStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
     WidgetsFlutterBinding.ensureInitialized();
 
     // Install error handlers and crash detector FIRST — before any async
@@ -180,6 +269,25 @@ class ScoutFlutter {
 
   static Future<void> _initializeCore(ScoutFlutterConfig config) async {
     final tempDir = await getTemporaryDirectory();
+
+    // Hydrate (or mint + persist) the cross-session anonymous user id.
+    // Stored under the app's Documents dir so it survives cache wipes
+    // and Flutter hot restarts. Failure is non-fatal — we just lose
+    // cross-session correlation for this run.
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final anonFile = File('${docsDir.path}/scout_anonymous_id');
+      if (await anonFile.exists()) {
+        _anonymousId = (await anonFile.readAsString()).trim();
+      }
+      if (_anonymousId == null || _anonymousId!.isEmpty) {
+        _anonymousId = uuidV4();
+        await anonFile.writeAsString(_anonymousId!);
+      }
+    } catch (_) {
+      // Storage failed — fall back to in-memory only for this session.
+      _anonymousId ??= uuidV4();
+    }
 
     final resourceAttrs = <String, Object>{
       if (config.environment != null) 'environment': config.environment!,
@@ -277,6 +385,12 @@ class ScoutFlutter {
     _offlineQueue = OfflineQueue(
       directory: offlineDir,
       maxStorageMb: config.maxOfflineStorageMb,
+      enabled: config.offlineBufferEnabled,
+      maxItemsPerSignal: {
+        'traces': config.offlineMaxTraceItems,
+        'metrics': config.offlineMaxMetricItems,
+        'logs': config.offlineMaxLogItems,
+      },
     );
 
     // Crash detection — check previous session before writing new marker.
@@ -332,48 +446,17 @@ class ScoutFlutter {
       );
     } catch (_) {}
 
-    // Native crash reports (KSCrash on iOS, signal handler on Android).
-    // These are written to disk by native code when the app crashes,
-    // then retrieved on next launch.
-    try {
-      final nativeCrashes = await ScoutPlatformChannel.getNativeCrashReports();
-      for (final crash in nativeCrashes) {
-        _emitSpan('native_crash', {
-          'crash.type': crash['crash_type'] as Object? ?? 'unknown',
-          'crash.reason': crash['crash_reason'] as Object? ?? 'unknown',
-          'crash.timestamp': crash['crash_timestamp'] as Object? ?? '',
-          if (crash['crash_thread_name'] != null)
-            'crash.thread': crash['crash_thread_name'] as Object,
-          if (crash['crash_stack_trace'] != null)
-            'crash.stack_trace': crash['crash_stack_trace'] as Object,
-          if (crash['crash_registers'] != null)
-            'crash.registers': crash['crash_registers'] as Object,
-          if (crash['crash_memory_map'] != null)
-            'crash.memory_map': crash['crash_memory_map'] as Object,
-          if (crash['crash_signal_code'] != null)
-            'crash.signal_code': crash['crash_signal_code'] as Object,
-          if (crash['crash_pid'] != null)
-            'crash.pid': crash['crash_pid'] as Object,
-          if (crash['crash_tid'] != null)
-            'crash.tid': crash['crash_tid'] as Object,
-          if (crash['crash_uid'] != null)
-            'crash.uid': crash['crash_uid'] as Object,
-          if (crash['crash_abi'] != null)
-            'crash.abi': crash['crash_abi'] as Object,
-          if (crash['crash_build_fingerprint'] != null)
-            'crash.build_fingerprint':
-                crash['crash_build_fingerprint'] as Object,
-          if (crash['crash_kernel'] != null)
-            'crash.kernel': crash['crash_kernel'] as Object,
-          if (crash['crash_process_uptime_secs'] != null)
-            'crash.process_uptime_secs':
-                crash['crash_process_uptime_secs'] as Object,
-          ..._commonAttributes(),
-        });
-      }
-    } catch (_) {
-      // Platform channel may not be available (e.g. tests, web).
-    }
+    // Drain every native-side crash pipeline. Three orthogonal sources:
+    //   1. KSCrash (iOS) / JVM uncaught + JNI signal handler (Android) —
+    //      written at the moment of crash to disk in-process.
+    //   2. MetricKit (iOS 14+) — delayed payloads the OS attributes
+    //      asynchronously, including crashes/hangs we missed because
+    //      we couldn't write to disk in time.
+    //   3. ApplicationExitInfo (Android API 30+) — every process death
+    //      the kernel knew about: ANR, OOM kill, native crash, etc.
+    // All three feed the same `native_crash` span shape so the
+    // backend doesn't need to branch on source.
+    await _drainCrashReports();
 
     // Periodic offline flush (every 60 seconds)
     _offlineFlushTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -468,22 +551,65 @@ class ScoutFlutter {
     span.end();
   }
 
+  /// Emits a "vital" — a user-defined or framework-defined
+  /// timing of interest (FBC, INV, custom feature-operation vitals).
+  /// All vitals share the `app_vital` span type with `vital.name` so
+  /// dashboards can chart any subset.
+  static void _emitVital(
+    String vitalName, {
+    required int durationMs,
+    String? type,
+    Map<String, Object>? extra,
+  }) {
+    _emitSpan('app_vital', {
+      'vital.name': vitalName,
+      'vital.duration': durationMs / 1000.0,
+      'vital.duration_ms': durationMs,
+      if (type != null) 'vital.type': type,
+      if (extra != null) ...extra,
+      ..._commonAttributes(),
+    });
+  }
+
   static void _setupGlobalTapDetection(ScoutFlutterConfig config) {
     _tapDetector = GlobalTapDetector(
       customGestureDetector: config.customGestureDetector,
-      onTapDetected: (elementName, elementDescription) {
+      onTapDetected: (details) {
         try {
           _emitSpan('user_interaction', {
-            'user_interaction.type': 'click',
-            'user_interaction.target': elementDescription,
-            'user_interaction.target.type': elementName,
+            'user_interaction.id': uuidV4(),
+            'user_interaction.type': 'tap',
+            'user_interaction.target': details.elementDescription,
+            'user_interaction.target.type': details.elementName,
+            'user_interaction.target.name_source': details.nameSource,
+            'user_interaction.target.permanent_id': details.permanentId,
+            'user_interaction.target.x': details.position.dx.round(),
+            'user_interaction.target.y': details.position.dy.round(),
             ..._commonAttributes(),
           });
-          addBreadcrumb('tap', '$elementName: $elementDescription');
+          addBreadcrumb(
+            'tap',
+            '${details.elementName}: ${details.elementDescription}',
+          );
+          // Arm INV: if the next screen_view fires on a *different*
+          // screen within _invWindowMs, that delta becomes the
+          // Interaction-to-Next-View vital.
+          _lastInteractionAtMs = DateTime.now().millisecondsSinceEpoch;
+          _lastInteractionScreen = _previousScreenName;
         } catch (_) {}
       },
     );
     _tapDetector!.start();
+  }
+
+  /// Synchronously drain every in-flight exporter (trace + metric +
+  /// log) to disk / network. Best-effort: each `forceFlush` call is
+  /// wrapped in a try/catch so a misbehaving exporter can't block
+  /// the AppLifecycleListener and freeze the host on background.
+  static void _forceFlushAll() {
+    try {
+      FlutterOTel.forceFlush();
+    } catch (_) {}
   }
 
   static void _setupLifecycleTracking() {
@@ -500,6 +626,12 @@ class ScoutFlutter {
           _sessionManager?.onBackground();
           _crashDetector?.markSessionPaused();
           addBreadcrumb('lifecycle', 'app_paused');
+          // Flush every in-flight span / metric / log batch before
+          // the OS suspends or kills us. Without this, taps emitted
+          // in the last ~5s (the BatchSpanProcessor's default
+          // scheduledDelayMillis) die with the process and are
+          // missing from the next-launch replay.
+          _forceFlushAll();
         } catch (_) {}
       },
       onResume: () {
@@ -534,6 +666,12 @@ class ScoutFlutter {
         ..._commonAttributes(),
       });
       addBreadcrumb('startup', 'cold_start: ${duration.inMilliseconds}ms');
+      // FBC (First Build Complete) — emitted as a vital so dashboards
+      // can chart it alongside INV without joining on app_startup.
+      // Uses the same cold-start measurement: SDK init → first
+      // post-frame callback. Process-start-to-first-frame (which
+      // would require an OS-level start time) is a future refinement.
+      _emitVital('fbc', durationMs: duration.inMilliseconds, type: 'startup');
     });
   }
 
@@ -559,8 +697,8 @@ class ScoutFlutter {
       onLongTask: (duration) {
         try {
           String? currentScreen;
-          if (_navObserver != null) {
-            currentScreen = _navObserver!.currentScreenName;
+          if (_currentScreenName != null) {
+            currentScreen = _currentScreenName;
           }
           _emitSpan('long_task', {
             'long_task.duration': duration.inMilliseconds / 1000.0,
@@ -579,8 +717,8 @@ class ScoutFlutter {
     ScoutPlatformChannel.setAnrHandler((durationMs) {
       try {
         String? currentScreen;
-        if (_navObserver != null) {
-          currentScreen = _navObserver!.currentScreenName;
+        if (_currentScreenName != null) {
+          currentScreen = _currentScreenName;
         }
         _emitSpan('anr', {
           'anr.duration': durationMs / 1000.0,
@@ -594,6 +732,31 @@ class ScoutFlutter {
     await ScoutPlatformChannel.startAnrDetection(
       thresholdMs: config.anrThresholdMs,
     );
+
+    // iOS-only sub-ANR hang detector. Different threshold (250 ms vs
+    // 5 s), different span type (`ui_hang`), runs as a second
+    // watchdog. Skipped if user set iosHangThresholdMs to 0 or if we
+    // aren't on iOS.
+    if (Platform.isIOS && config.iosHangThresholdMs > 0) {
+      ScoutPlatformChannel.setUiHangHandler((durationMs) {
+        try {
+          String? currentScreen;
+          if (_currentScreenName != null) {
+            currentScreen = _currentScreenName;
+          }
+          _emitSpan('ui_hang', {
+            'ui_hang.duration': durationMs / 1000.0,
+            'ui_hang.threshold': config.iosHangThresholdMs / 1000.0,
+            if (currentScreen != null) 'screen.name': currentScreen,
+            ..._commonAttributes(),
+          });
+          addBreadcrumb('ui_hang', 'UI hang: ${durationMs}ms');
+        } catch (_) {}
+      });
+      await ScoutPlatformChannel.startUiHangDetection(
+        thresholdMs: config.iosHangThresholdMs,
+      );
+    }
   }
 
   static void _setupFrameMetrics() {
@@ -617,8 +780,8 @@ class ScoutFlutter {
           if (!(_sessionManager?.isSampled ?? true)) return;
           final screenAttr =
               <String, Object>{
-                if (_navObserver?.currentScreenName != null)
-                  'screen.name': _navObserver!.currentScreenName!,
+                if (_currentScreenName != null)
+                  'screen.name': _currentScreenName!,
                 if (_sessionManager != null)
                   'session.id': _sessionManager!.sessionId,
               }.toAttributes();
@@ -636,8 +799,8 @@ class ScoutFlutter {
       onFrozenFrame: (duration) {
         try {
           String? currentScreen;
-          if (_navObserver != null) {
-            currentScreen = _navObserver!.currentScreenName;
+          if (_currentScreenName != null) {
+            currentScreen = _currentScreenName;
           }
           _emitSpan('frozen_frame', {
             'frozen_frame.duration': duration.inMilliseconds / 1000.0,
@@ -680,8 +843,8 @@ class ScoutFlutter {
           if (!(_sessionManager?.isSampled ?? true)) return;
           final attrs =
               <String, Object>{
-                if (_navObserver?.currentScreenName != null)
-                  'screen.name': _navObserver!.currentScreenName!,
+                if (_currentScreenName != null)
+                  'screen.name': _currentScreenName!,
                 if (_sessionManager != null)
                   'session.id': _sessionManager!.sessionId,
               }.toAttributes();
@@ -693,8 +856,8 @@ class ScoutFlutter {
           if (!(_sessionManager?.isSampled ?? true)) return;
           final attrs =
               <String, Object>{
-                if (_navObserver?.currentScreenName != null)
-                  'screen.name': _navObserver!.currentScreenName!,
+                if (_currentScreenName != null)
+                  'screen.name': _currentScreenName!,
                 if (_sessionManager != null)
                   'session.id': _sessionManager!.sessionId,
               }.toAttributes();
@@ -778,15 +941,17 @@ class ScoutFlutter {
           'error',
           'flutter_error: ${details.exception.runtimeType}',
         );
-        _emitSpan('error', {
-          'error.type': 'flutter_error',
-          'error.message': details.exception.toString(),
-          'error.stack_trace': details.stack?.toString() ?? '',
-          'error.library': details.library ?? '',
-          'error.handled': 'true',
-          'breadcrumbs': _safeBreadcrumbsJson(),
-          ..._commonAttributes(),
-        });
+        _emitSpan(
+          'error',
+          _errorAttributes(
+            type: 'flutter_error',
+            error: details.exception,
+            stackTrace: details.stack,
+            library: details.library,
+            source: 'source',
+            handling: 'handled',
+          ),
+        );
       } catch (_) {}
       appHandler(details);
     };
@@ -806,14 +971,16 @@ class ScoutFlutter {
           'error',
           'uncaught_error: ${error.runtimeType}',
         );
-        _emitSpan('error', {
-          'error.type': 'uncaught_error',
-          'error.message': error.toString(),
-          'error.stack_trace': stack.toString(),
-          'error.handled': 'false',
-          'breadcrumbs': _safeBreadcrumbsJson(),
-          ..._commonAttributes(),
-        });
+        _emitSpan(
+          'error',
+          _errorAttributes(
+            type: 'uncaught_error',
+            error: error,
+            stackTrace: stack,
+            source: 'source',
+            handling: 'unhandled',
+          ),
+        );
       } catch (_) {}
       if (appHandler != null) return appHandler(error, stack);
       return true;
@@ -828,6 +995,186 @@ class ScoutFlutter {
     } catch (_) {
       return '[]';
     }
+  }
+
+  /// Stack traces longer than this are truncated; the span carries
+  /// `error.was_truncated: true` so the backend can flag it.
+  static const _maxStackChars = 8000;
+
+  /// Build the common `error.*` attribute bundle every emission site
+  /// uses. Centralises fingerprint computation, stack truncation, and
+  /// causes-chain walking so the three call sites stay in lockstep.
+  static Map<String, Object> _errorAttributes({
+    required String type,
+    required Object error,
+    StackTrace? stackTrace,
+    String? library,
+    required String source,
+    required String handling,
+  }) {
+    final stackString = stackTrace?.toString() ?? '';
+    final wasTruncated = stackString.length > _maxStackChars;
+    final stack =
+        wasTruncated ? stackString.substring(0, _maxStackChars) : stackString;
+
+    // Fingerprint: short stable hash of (error type + first stack frame
+    // + message). Mirrors `error.fingerprint` in DD / scout_react —
+    // lets the backend group recurrences of the same error without
+    // requiring identical full stack traces.
+    final firstFrame = stack
+        .split('\n')
+        .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '');
+    final fingerprint = djb2Hash(
+      '${error.runtimeType}|${error.toString()}|$firstFrame',
+    );
+
+    // Causes chain — Dart 3 `Error.cause` is rare in user code, but
+    // some Flutter framework errors and `package:async`-wrapped
+    // futures expose it. Walk up to 5 deep to bound payload size.
+    final causes = _collectErrorCauses(error);
+
+    return {
+      'error.id': uuidV4(),
+      'error.type': type,
+      'error.message': error.toString(),
+      'error.stack_trace': stack,
+      'error.handled': handling == 'handled' ? 'true' : 'false',
+      'error.handling': handling,
+      'error.source': source,
+      'error.source_type': 'flutter',
+      'error.fingerprint': fingerprint,
+      if (wasTruncated) 'error.was_truncated': true,
+      if (library != null && library.isNotEmpty) 'error.library': library,
+      if (causes.isNotEmpty) 'error.causes_json': jsonEncode(causes),
+      if (_appStartedAtMs != null)
+        'error.time_since_app_start_ms':
+            DateTime.now().millisecondsSinceEpoch - _appStartedAtMs!,
+      'breadcrumbs': _safeBreadcrumbsJson(),
+      ..._commonAttributes(),
+    };
+  }
+
+  static List<Map<String, String?>> _collectErrorCauses(Object error) {
+    final out = <Map<String, String?>>[];
+    Object? cur = error;
+    var depth = 0;
+    while (cur is Error && cur.toString().isNotEmpty && depth < 5) {
+      final stack = cur.stackTrace?.toString();
+      out.add({
+        'message': cur.toString(),
+        'type': cur.runtimeType.toString(),
+        if (stack != null && stack.isNotEmpty)
+          'stack': stack.length > 2000 ? stack.substring(0, 2000) : stack,
+      });
+      // Dart Error has no standard `cause` field; the chain stops here
+      // unless the framework subclassed it. Loop guard keeps this safe.
+      break; // placeholder until a richer chain extraction lands
+    }
+    if (depth == 0 && out.isEmpty) return const [];
+    return out;
+  }
+
+  /// Pull every kind of native crash signal we can — KSCrash on iOS,
+  /// in-process JVM + JNI on Android, MetricKit, ApplicationExitInfo —
+  /// and emit each as a `native_crash` span with the full attribute set.
+  static Future<void> _drainCrashReports() async {
+    final sources = <Future<List<Map<String, dynamic>>>>[
+      ScoutPlatformChannel.getNativeCrashReports(),
+      ScoutPlatformChannel.getMetricKitReports(),
+      ScoutPlatformChannel.getExitInfoReports(),
+    ];
+    final results = await Future.wait(
+      sources.map((f) => f.catchError((_) => <Map<String, dynamic>>[])),
+    );
+    for (final list in results) {
+      for (final crash in list) {
+        try {
+          _emitSpan('native_crash', _crashAttributes(crash));
+        } catch (_) {
+          /* never crash the host while reporting a crash */
+        }
+      }
+    }
+  }
+
+  /// Flatten one platform-side crash dict into the OTel attribute map
+  /// we ship on `native_crash` spans. Snake_case → dotted, with
+  /// platform-specific keys passed through untouched so a backend that
+  /// understands the iOS Mach world doesn't lose `mach_exception` /
+  /// `mach_code` data and an Android backend doesn't lose
+  /// `subreason` / `tombstone`.
+  static Map<String, Object> _crashAttributes(Map<String, dynamic> crash) {
+    Object? v(String k) => crash[k];
+    String? s(String k) {
+      final x = v(k);
+      return x is String && x.isNotEmpty ? x : null;
+    }
+
+    final out = <String, Object>{
+      'crash.type': s('crash_type') ?? 'unknown',
+      'crash.reason': s('crash_reason') ?? 'unknown',
+      'crash.timestamp': s('crash_timestamp') ?? '',
+    };
+
+    // Common platform fields
+    final passthroughString = <String, String>{
+      'crash.thread': 'crash_thread',
+      'crash.thread_name': 'crash_thread_name',
+      'crash.stack_trace': 'crash_stack_trace',
+      'crash.signal': 'crash_signal',
+      'crash.signal_code': 'crash_signal_code',
+      'crash.signal_address': 'crash_signal_address',
+      'crash.mach_exception': 'crash_mach_exception',
+      'crash.mach_code': 'crash_mach_code',
+      'crash.mach_subcode': 'crash_mach_subcode',
+      'crash.nsexception_name': 'crash_nsexception_name',
+      'crash.cpu_arch': 'crash_cpu_arch',
+      'crash.build_type': 'crash_build_type',
+      'crash.os_name': 'crash_os_name',
+      'crash.os_version': 'crash_os_version',
+      'crash.kernel_version': 'crash_kernel_version',
+      'crash.device_model': 'crash_device_model',
+      'crash.machine': 'crash_machine',
+      'crash.process_name': 'crash_process_name',
+      'crash.report_id': 'crash_report_id',
+      'crash.registers_json': 'crash_registers_json',
+      'crash.callstack_tree_json': 'crash_callstack_tree_json',
+      'crash.binary_images_json': 'crash_binary_images_json',
+      // Android-specific
+      'crash.abi': 'crash_abi',
+      'crash.build_fingerprint': 'crash_build_fingerprint',
+      'crash.kernel': 'crash_kernel',
+      'crash.registers': 'crash_registers',
+      'crash.memory_map': 'crash_memory_map',
+      'crash.tombstone': 'crash_tombstone',
+      'crash.app_version': 'crash_app_version',
+    };
+    passthroughString.forEach((dotKey, snakeKey) {
+      final value = s(snakeKey);
+      if (value != null) out[dotKey] = value;
+    });
+
+    // Numeric platform fields
+    final passthroughNumeric = <String, String>{
+      'crash.pid': 'crash_pid',
+      'crash.tid': 'crash_tid',
+      'crash.uid': 'crash_uid',
+      'crash.process_uptime_secs': 'crash_process_uptime_secs',
+      'crash.subreason': 'crash_subreason',
+      'crash.exit_status': 'crash_exit_status',
+      'crash.importance': 'crash_importance',
+      'crash.pss_kb': 'crash_pss_kb',
+      'crash.rss_kb': 'crash_rss_kb',
+      'crash.death_timestamp_ms': 'crash_death_timestamp_ms',
+    };
+    passthroughNumeric.forEach((dotKey, snakeKey) {
+      final value = v(snakeKey);
+      if (value is num) out[dotKey] = value;
+    });
+
+    // Context attached to every span (session.id, enduser.*, etc.)
+    out.addAll(_commonAttributes());
+    return out;
   }
 
   /// Record a breadcrumb and persist to disk for crash survival.
@@ -852,13 +1199,16 @@ class ScoutFlutter {
         'error',
         'manual_error: ${error.runtimeType}',
       );
-      _emitSpan('error', {
-        'error.type': 'manual_error',
-        'error.message': error.toString(),
-        if (stackTrace != null) 'error.stack_trace': stackTrace.toString(),
-        'breadcrumbs': _safeBreadcrumbsJson(),
-        ..._commonAttributes(),
-      });
+      _emitSpan(
+        'error',
+        _errorAttributes(
+          type: 'manual_error',
+          error: error,
+          stackTrace: stackTrace,
+          source: 'custom',
+          handling: 'handled',
+        ),
+      );
     } catch (_) {
       // Never crash the app due to telemetry failure.
     }
@@ -876,12 +1226,42 @@ class ScoutFlutter {
   }
 
   static Map<String, Object> _commonAttributes() {
+    final m = _latestScroll;
     return {
       ..._userAttributes,
+      if (_anonymousId != null) 'enduser.anonymous_id': _anonymousId!,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
+      // DD parity: distinguishes user sessions from synthetic / ci-test
+      // traffic. Today we only emit user-driven traffic, so this is
+      // always 'user'.
+      'session.type': 'user',
+      if (m != null) ...{
+        'display.scroll.max_depth': m.maxDepth.round(),
+        'display.scroll.max_depth_scroll_top': m.maxDepthScrollTop.round(),
+        'display.scroll.max_scroll_height': m.maxScrollHeight.round(),
+        'display.scroll.max_scroll_height_time_ms': m.maxScrollHeightTimeMs,
+      },
     };
+  }
+
+  /// Wrap your app's root widget to enable per-screen scroll-depth
+  /// tracking. One line in the app's entry point:
+  ///
+  /// ```dart
+  /// runApp(ScoutFlutter.observeScroll(child: MyApp()));
+  /// ```
+  ///
+  /// Every scroll event decorates the next emitted span with
+  /// `display.scroll.max_depth`, `max_depth_scroll_top`,
+  /// `max_scroll_height`, `max_scroll_height_time_ms`. Accumulators
+  /// reset on each navigation transition.
+  static Widget observeScroll({required Widget child}) {
+    return ScoutScrollObserver(
+      child: child,
+      onMetrics: (m) => _latestScroll = m,
+    );
   }
 
   /// Current user ID, if set.
@@ -958,8 +1338,7 @@ class ScoutFlutter {
 
       final logAttrs = <String, Object>{
         'session.id': _sessionManager?.sessionId ?? '',
-        if (_navObserver?.currentScreenName != null)
-          'screen.name': _navObserver!.currentScreenName!,
+        if (_currentScreenName != null) 'screen.name': _currentScreenName!,
         ..._userAttributes,
         ...?entry.attributes,
       };
@@ -1069,7 +1448,7 @@ class ScoutFlutter {
     _nativeVitalsCollector = null;
     _lifecycleListener?.dispose();
     _lifecycleListener = null;
-    _navObserver = null;
+    _currentScreenName = null;
     _meter = null;
     _coldStartStopwatch = null;
     _coldStartRecorded = false;
