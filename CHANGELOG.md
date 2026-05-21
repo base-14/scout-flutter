@@ -1,3 +1,11 @@
+## 0.1.5
+
+### Features
+- iOS: deep crash reports via KSCrash, MetricKit, and ExitInfo
+- UI hang detector for main-thread freezes
+- FBC and INV vitals
+- WebView bridge for capturing telemetry from embedded web content
+
 ## 0.1.4
 
 ### Changes

@@ -9,4 +9,4 @@
 library;
 
 const String kScopeName = 'base14.scout.flutter';
-const String kScopeVersion = '0.1.4';
+const String kScopeVersion = '0.1.5';
