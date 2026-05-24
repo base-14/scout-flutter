@@ -18,6 +18,8 @@ import 'frame_metrics_collector.dart';
 import 'long_task_detector.dart';
 import 'native_vitals_collector.dart';
 import 'offline_queue.dart';
+import 'scout_debug_logger.dart';
+import 'scout_debug_span_exporter.dart';
 import 'scout_dio_interceptor.dart';
 import 'scout_http_overrides.dart';
 import 'scope.dart';
@@ -79,6 +81,7 @@ class ScoutFlutter {
   static String? _activeTraceId;
   static String? _activeSpanId;
   static CrashDetector? _crashDetector;
+  static ScoutDebugLogger _debugLogger = const ScoutDebugLogger(enabled: false);
   // Cross-session stable identifier — persisted to disk on first init,
   // hydrated on every subsequent launch. Attached as `enduser.anonymous_id`
   // on every span so backends can group sessions by user without
@@ -265,10 +268,12 @@ class ScoutFlutter {
       await _initializeCore(config);
     } catch (e) {
       debugPrint('ScoutFlutter: initialization failed: $e');
+      _debugLogger.error('initialization failed: $e');
     }
   }
 
   static Future<void> _initializeCore(ScoutFlutterConfig config) async {
+    _debugLogger = ScoutDebugLogger(enabled: config.debugLogging);
     final tempDir = await getTemporaryDirectory();
 
     // Hydrate (or mint + persist) the cross-session anonymous user id.
@@ -305,9 +310,23 @@ class ScoutFlutter {
     }
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
-    final spanExporter = OtlpHttpSpanExporter(
-      OtlpHttpExporterConfig(endpoint: httpEndpoint, headers: config.headers),
-    );
+    final SpanExporter spanExporter =
+        config.debugLogging
+            ? ScoutDebugSpanExporter(
+              OtlpHttpSpanExporter(
+                OtlpHttpExporterConfig(
+                  endpoint: httpEndpoint,
+                  headers: config.headers,
+                ),
+              ),
+              _debugLogger,
+            )
+            : OtlpHttpSpanExporter(
+              OtlpHttpExporterConfig(
+                endpoint: httpEndpoint,
+                headers: config.headers,
+              ),
+            );
 
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
@@ -320,6 +339,7 @@ class ScoutFlutter {
       sampler: ScoutSessionSampler(
         sessionResolver: () => _sessionManager,
         alwaysCaptureErrors: config.alwaysCaptureErrors,
+        logger: config.debugLogging ? _debugLogger : null,
       ),
       spanProcessor: BatchSpanProcessor(spanExporter),
       // Use our fixed exporter to work around the frozen protobuf bug
@@ -337,6 +357,13 @@ class ScoutFlutter {
     );
 
     _config = config;
+    _debugLogger.init(
+      serviceName: config.serviceName,
+      endpoint: httpEndpoint,
+      version: config.serviceVersion,
+      sampleRate: config.sessionSampleRate,
+      alwaysCaptureErrors: config.alwaysCaptureErrors,
+    );
 
     if (config.enableAutoTapTracking) {
       _setupGlobalTapDetection(config);
@@ -383,6 +410,9 @@ class ScoutFlutter {
     _sessionManager = SessionManager(
       sampleRate: config.sessionSampleRate,
       timeoutMinutes: config.sessionTimeoutMinutes,
+      onSessionChanged:
+          (sessionId, sampled) =>
+              _debugLogger.session(sessionId: sessionId, sampled: sampled),
     );
 
     // Offline queue + crash detection
@@ -1347,6 +1377,11 @@ class ScoutFlutter {
           entry.level == scout_log.LogLevel.error;
       if (!alwaysOn && !(_sessionManager?.isSampled ?? true)) return;
 
+      _debugLogger.log(
+        level: entry.level.severityText.toLowerCase(),
+        message: entry.message,
+      );
+
       final logAttrs = <String, Object>{
         'session.id': _sessionManager?.sessionId ?? '',
         if (_currentScreenName != null) 'screen.name': _currentScreenName!,
@@ -1486,5 +1521,6 @@ class ScoutFlutter {
     _activeTraceId = null;
     _activeSpanId = null;
     _crashDetector = null;
+    _debugLogger = const ScoutDebugLogger(enabled: false);
   }
 }

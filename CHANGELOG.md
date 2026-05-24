@@ -4,6 +4,7 @@
 - `sessionSampleRate` default changed from `100.0` to `1.0` (1% of sessions)
 - New `alwaysCaptureErrors` flag (default `true`) — errors and crashes (`error`, `native_crash`, `app_crash`, `anr`, `ui_hang`) bypass `sessionSampleRate` and are always exported
 - Sampling now enforced at the OpenTelemetry layer via a custom `Sampler`, so it also applies to spans from auto-instrumentation and direct `tracer.startSpan` calls
+- New `debugLogging` flag (default `false`) — emits per-event `[scout]` diagnostics via `debugPrint` for init, session rotation, sampling decisions, export batches, and log entries
 
 ## 0.1.5
 

@@ -22,6 +22,7 @@ void main() {
       expect(config.anrThresholdMs, 5000);
       expect(config.sessionSampleRate, 1.0);
       expect(config.alwaysCaptureErrors, true);
+      expect(config.debugLogging, false);
     });
 
     test('creates with all optional fields', () {

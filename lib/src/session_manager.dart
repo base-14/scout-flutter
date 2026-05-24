@@ -16,6 +16,8 @@ class SessionManager {
 
   final DateTime Function() _clock;
 
+  final void Function(String sessionId, bool sampled)? _onSessionChanged;
+
   String _sessionId;
   bool _isSampled;
   DateTime? _backgroundTimestamp;
@@ -24,17 +26,21 @@ class SessionManager {
   ///
   /// [sampleRate] must be between 0.0 and 100.0 inclusive.
   /// [timeoutMinutes] defaults to 30 minutes.
+  /// [onSessionChanged] fires once on construction and on every rotation.
   SessionManager({
     required double sampleRate,
     this.timeoutMinutes = 30,
     DateTime Function()? clock,
+    void Function(String sessionId, bool sampled)? onSessionChanged,
   }) : assert(sampleRate >= 0.0 && sampleRate <= 100.0),
        sampleRate = sampleRate.clamp(0.0, 100.0),
        _clock = clock ?? DateTime.now,
+       _onSessionChanged = onSessionChanged,
        _sessionId = '',
        _isSampled = false {
     _sessionId = _generateUuidV4();
     _isSampled = _rollSampling();
+    _onSessionChanged?.call(_sessionId, _isSampled);
   }
 
   /// The current session ID (UUID v4).
@@ -67,6 +73,7 @@ class SessionManager {
   void rotateSession() {
     _sessionId = _generateUuidV4();
     _isSampled = _rollSampling();
+    _onSessionChanged?.call(_sessionId, _isSampled);
   }
 
   /// Generates a UUID v4 string using [Random.secure].

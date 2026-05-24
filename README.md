@@ -229,7 +229,23 @@ ScoutFlutterConfig(
   // Custom
   resourceAttributes: {'deployment.region': 'us-east-1'},
   customGestureDetector: (widget) => null,
+
+  // Diagnostics
+  debugLogging: false,                  // Verbose [scout] logs to debugPrint
 )
+```
+
+## Debug Logging
+
+Set `debugLogging: true` to print a `[scout]` line for every init, session rotation, sampling decision, export batch, and log entry. Useful while integrating; noisy in production.
+
+```
+[scout] init ok (service=my-app endpoint=http://localhost:4318 v=1.0.0 sampleRate=1.0 alwaysCaptureErrors=true)
+[scout] session a1b2c3 sampled=true
+[scout] span screen_view → recordAndSample
+[scout] span http.request → drop
+[scout] export batch: 8 spans (212ms) ok
+[scout] log [warn] Retry attempt 2
 ```
 
 ## Architecture

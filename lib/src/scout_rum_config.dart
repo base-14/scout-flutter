@@ -125,6 +125,13 @@ class ScoutFlutterConfig {
   /// Callback to filter/modify events before export.
   final BeforeSendCallback? beforeSend;
 
+  /// Emit verbose per-event diagnostics via `debugPrint` while the SDK
+  /// is running. Off by default. When enabled, every init, session
+  /// rotation, sampling decision, export batch, and log entry prints
+  /// one line prefixed `[Scout]`. Intended for local development —
+  /// noisy in production.
+  final bool debugLogging;
+
   const ScoutFlutterConfig({
     required this.serviceName,
     required this.endpoint,
@@ -159,6 +166,7 @@ class ScoutFlutterConfig {
     this.offlineMaxMetricItems = 2000,
     this.offlineMaxLogItems = 5000,
     this.beforeSend,
+    this.debugLogging = false,
   }) : longTaskThresholdMs =
            longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,
