@@ -85,8 +85,17 @@ class ScoutFlutterConfig {
   /// Hosts that receive W3C traceparent headers for distributed tracing.
   final List<String>? firstPartyHosts;
 
-  /// Percentage of sessions to sample (0.0-100.0). Default 100.0 (all).
+  /// Percentage of sessions to sample (0.0-100.0). Default 1.0 (1% of
+  /// sessions). Errors bypass this gate by default — see
+  /// [alwaysCaptureErrors].
   final double sessionSampleRate;
+
+  /// When true (default), error- and crash-class spans (`error`,
+  /// `native_crash`, `app_crash`, `anr`) bypass [sessionSampleRate] and
+  /// are always exported regardless of the per-session sampling decision.
+  /// Set to false to subject errors to the same sampling as other
+  /// telemetry.
+  final bool alwaysCaptureErrors;
 
   /// Minutes of inactivity before rotating the session. Default 30.
   final int sessionTimeoutMinutes;
@@ -139,7 +148,8 @@ class ScoutFlutterConfig {
     this.enableNetworkTracking = true,
     this.ignoreUrlPatterns,
     this.firstPartyHosts,
-    double sessionSampleRate = 100.0,
+    double sessionSampleRate = 1.0,
+    this.alwaysCaptureErrors = true,
     this.sessionTimeoutMinutes = 30,
     this.enableLogging = true,
     this.capturePrintStatements = false,

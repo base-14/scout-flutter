@@ -11,7 +11,7 @@ dependencies:
   scout_flutter:
     git:
       url: https://github.com/base-14/scout-flutter.git
-      ref: v0.1.5
+      ref: v0.1.6
 ```
 
 ### 2. Initialize in main()
@@ -170,6 +170,14 @@ ScoutFlutterConfig(
 )
 ```
 
+## Sampling
+
+By default Scout samples **1% of sessions** to keep telemetry volume low at scale. Sampling decisions are made per session — when a session is sampled, every span in it is recorded; otherwise the whole session is dropped (so traces stay coherent).
+
+Errors and crashes bypass the session sample rate by default — `error`, `native_crash`, `app_crash`, `anr`, and `ui_hang` spans are always exported regardless of whether the session was sampled. Set `alwaysCaptureErrors: false` to make error-class spans respect the same gate.
+
+Adjust the rate with `sessionSampleRate` (0.0–100.0). Sampling is enforced at the OpenTelemetry layer, so it also applies to spans emitted by auto-instrumentation and direct `tracer.startSpan` calls.
+
 ## Configuration
 
 ```dart
@@ -201,7 +209,8 @@ ScoutFlutterConfig(
   anrThresholdMs: 5000,                  // Min 1000ms
 
   // Sessions
-  sessionSampleRate: 100.0,             // 0.0-100.0 (default: 100)
+  sessionSampleRate: 1.0,               // 0.0-100.0 (default: 1.0 = 1% of sessions)
+  alwaysCaptureErrors: true,            // Errors/crashes bypass sampleRate (default: true)
   sessionTimeoutMinutes: 30,            // Rotate after inactivity
 
   // Network

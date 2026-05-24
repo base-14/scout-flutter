@@ -20,6 +20,8 @@ void main() {
       expect(config.longTaskThresholdMs, 100);
       expect(config.enableAnrDetection, true);
       expect(config.anrThresholdMs, 5000);
+      expect(config.sessionSampleRate, 1.0);
+      expect(config.alwaysCaptureErrors, true);
     });
 
     test('creates with all optional fields', () {

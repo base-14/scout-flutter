@@ -24,6 +24,7 @@ import 'scope.dart';
 import 'scout_logger.dart' as scout_log;
 import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
+import 'scout_session_sampler.dart';
 import 'session_manager.dart';
 import 'breadcrumb_manager.dart';
 import 'crash_detector.dart';
@@ -316,6 +317,10 @@ class ScoutFlutter {
       endpoint: httpEndpoint,
       secure: config.secure,
       enableMetrics: config.enablePerformanceMetrics,
+      sampler: ScoutSessionSampler(
+        sessionResolver: () => _sessionManager,
+        alwaysCaptureErrors: config.alwaysCaptureErrors,
+      ),
       spanProcessor: BatchSpanProcessor(spanExporter),
       // Use our fixed exporter to work around the frozen protobuf bug
       // in dartastic_opentelemetry's OtlpHttpMetricExporter.
@@ -530,7 +535,10 @@ class ScoutFlutter {
   /// Creates and immediately ends a span, subject to sampling and beforeSend.
   static void _emitSpan(String name, Map<String, Object> attributes) {
     if (!isInitialized) return;
-    if (!(_sessionManager?.isSampled ?? true)) return;
+    final alwaysOn =
+        (_config?.alwaysCaptureErrors ?? true) &&
+        kErrorClassSpans.contains(name);
+    if (!alwaysOn && !(_sessionManager?.isSampled ?? true)) return;
 
     final filtered = _applyBeforeSend('span', name, attributes);
     if (filtered == null) return;
@@ -1334,7 +1342,10 @@ class ScoutFlutter {
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     try {
-      if (!(_sessionManager?.isSampled ?? true)) return;
+      final alwaysOn =
+          (_config?.alwaysCaptureErrors ?? true) &&
+          entry.level == scout_log.LogLevel.error;
+      if (!alwaysOn && !(_sessionManager?.isSampled ?? true)) return;
 
       final logAttrs = <String, Object>{
         'session.id': _sessionManager?.sessionId ?? '',

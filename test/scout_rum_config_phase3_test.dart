@@ -11,7 +11,8 @@ void main() {
       expect(config.enableNetworkTracking, isTrue);
       expect(config.ignoreUrlPatterns, isNull);
       expect(config.firstPartyHosts, isNull);
-      expect(config.sessionSampleRate, 100.0);
+      expect(config.sessionSampleRate, 1.0);
+      expect(config.alwaysCaptureErrors, isTrue);
       expect(config.sessionTimeoutMinutes, 30);
       expect(config.enableLogging, isTrue);
       expect(config.capturePrintStatements, isFalse);
