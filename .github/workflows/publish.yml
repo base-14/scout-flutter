@@ -1,0 +1,44 @@
+name: Publish to pub.dev
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify tag matches pubspec version
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          VERSION="v$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "Tag $TAG does not match pubspec version $VERSION"
+            exit 1
+          fi
+
+      - name: Format check
+        run: dart format --set-exit-if-changed .
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Publish - dry run
+        run: flutter pub publish --dry-run
+
+      - name: Publish
+        run: flutter pub publish --force
