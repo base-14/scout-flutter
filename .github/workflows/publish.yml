@@ -2,7 +2,8 @@ name: Publish to pub.dev
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   publish:
@@ -16,6 +17,8 @@ jobs:
         with:
           channel: stable
 
+      - uses: dart-lang/setup-dart@v1
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -28,17 +31,11 @@ jobs:
             exit 1
           fi
 
-      - name: Format check
-        run: dart format --set-exit-if-changed .
-
-      - name: Analyze
-        run: flutter analyze
-
-      - name: Test
-        run: flutter test
+      - name: Run CI (format, analyze, test)
+        run: make ci
 
       - name: Publish - dry run
-        run: flutter pub publish --dry-run
+        run: dart pub publish --dry-run
 
       - name: Publish
-        run: flutter pub publish --force
+        run: dart pub publish --force
