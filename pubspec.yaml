@@ -1,6 +1,16 @@
 name: scout_flutter
 description: Zero-config OpenTelemetry RUM for Flutter. Auto-captures taps, navigation, errors, lifecycle, crashes, performance metrics, network requests, and structured logs.
 version: 0.1.6
+homepage: https://base14.io
+repository: https://github.com/base-14/scout-flutter
+issue_tracker: https://github.com/base-14/scout-flutter/issues
+
+topics:
+  - opentelemetry
+  - observability
+  - rum
+  - monitoring
+  - telemetry
 
 environment:
   sdk: ^3.7.0
