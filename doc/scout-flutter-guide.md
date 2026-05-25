@@ -7,15 +7,18 @@ GETTING STARTED
 
 1. Add the dependency
 
-In your app's pubspec.yaml:
+Install from pub.dev:
+
+  flutter pub add scout_flutter
+
+Or add it to your pubspec.yaml manually:
 
 dependencies:
-  scout_flutter:
-    git:
-      url: https://github.com/base-14/scout-flutter.git
-      ref: v0.1.5
+  scout_flutter: ^0.1.7
 
 Then run: flutter pub get
+
+Package page: https://pub.dev/packages/scout_flutter
 
 
 2. Initialize the SDK

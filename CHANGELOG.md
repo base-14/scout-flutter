@@ -1,3 +1,10 @@
+## 0.1.7
+
+### Docs
+- README rewritten to focus on capabilities; install/usage instructions moved to the integration guide
+- Integration guide updated to install from pub.dev (was git URL)
+- pub.dev publisher badge wired to base14.io
+
 ## 0.1.6
 
 ### Changes

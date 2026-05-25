@@ -1,45 +1,13 @@
 # Scout Flutter
 
-Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. Install the package, call `initialize()` — that's it.
+[![pub package](https://img.shields.io/pub/v/scout_flutter.svg)](https://pub.dev/packages/scout_flutter)
+[![publisher](https://img.shields.io/pub/publisher/scout_flutter.svg)](https://pub.dev/publishers/base14.io)
 
-## Quick Start
+Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, one `initialize()` call — and the SDK captures spans, metrics, and logs for taps, navigation, errors, lifecycle, crashes, performance, and network out of the box.
 
-### 1. Add dependency
-
-```yaml
-dependencies:
-  scout_flutter:
-    git:
-      url: https://github.com/base-14/scout-flutter.git
-      ref: v0.1.6
-```
-
-### 2. Initialize in main()
-
-```dart
-import 'package:scout_flutter/scout_flutter.dart';
-
-Future<void> main() async {
-  await ScoutFlutter.initialize(
-    config: ScoutFlutterConfig(
-      serviceName: 'my-app',
-      endpoint: 'https://your-otel-endpoint:4318',
-    ),
-  );
-  runApp(const MyApp());
-}
-```
-
-### 3. (Optional) Add navigation tracking
-
-```dart
-MaterialApp(
-  navigatorObservers: [ScoutFlutter.navigatorObserver],
-  // ...
-)
-```
-
-That's it. Everything else is automatic.
+- **Package** — https://pub.dev/packages/scout_flutter
+- **Integration guide** — [doc/scout-flutter-guide.md](doc/scout-flutter-guide.md)
+- **Publisher** — [base14.io](https://pub.dev/publishers/base14.io)
 
 ## What's Captured
 
@@ -85,155 +53,23 @@ That's it. Everything else is automatic.
 
 ## Crash Detection
 
-Scout detects three categories of crashes:
+Three categories of crashes:
 
-**Session marker crashes** (`app_crash` span) — Detects OOM kills, `exit()` calls, and SIGKILL by persisting a session marker file. If the app was in the foreground and never paused before terminating, the next launch emits a crash span with the previous session's breadcrumbs.
+- **Session marker** (`app_crash`) — OOM kills, `exit()` calls, and SIGKILL via persistent marker file. Reported on the next launch with the crashed session's breadcrumbs.
+- **JVM / NSException** (`native_crash`) — uncaught Java/Kotlin exceptions on Android, NSExceptions on iOS. Written to disk before the process dies.
+- **Native signals** (`native_crash`) — SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP on Android via a C signal handler. Captures stack trace via frame-pointer walk, register dump, signal code, pid/tid/uid, memory map, ABI, build fingerprint, kernel version, process uptime.
 
-**JVM/NSException crashes** (`native_crash` span) — Catches uncaught JVM exceptions on Android and NSExceptions on iOS. Written to disk before the process dies and reported on next launch.
-
-**Native signal crashes** (`native_crash` span) — Catches SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP on Android via a C signal handler. Captures:
-- Full stack trace via frame pointer walk (not just signal handler frames)
-- Register dump (PC, LR, SP, FP + general purpose registers)
-- Signal code name (e.g. `SEGV_MAPERR`)
-- Process/thread IDs and thread name
-- Memory map (`/proc/self/maps`) for offline symbolication
-- ABI, build fingerprint, kernel version, process uptime
-
-**Breadcrumb persistence** — Breadcrumbs are written to disk on every record, so they survive crashes. Both `app_crash` and `native_crash` spans include the full breadcrumb trail from the crashed session.
+Breadcrumbs are persisted to disk on every record, so they survive crashes and ship with both `app_crash` and `native_crash` spans.
 
 ## SDK Crash Safety
 
-The SDK is designed to never crash your app. Every telemetry callback, error handler, and export path is wrapped in try/catch. If any telemetry operation fails, it silently degrades — your app continues running normally.
-
-## Custom Events
-
-```dart
-// Log a business event
-ScoutFlutter.logEvent('purchase', attributes: {'item': 'widget'});
-
-// Add breadcrumb for error context
-ScoutFlutter.addBreadcrumb('checkout', 'added item to cart');
-
-// Report error manually
-ScoutFlutter.reportError(error, stackTrace);
-
-// Set user identity (attached to all subsequent spans)
-ScoutFlutter.setUser(id: 'user-123', email: 'user@example.com');
-```
-
-## Structured Logging
-
-```dart
-ScoutFlutter.logDebug('Cache hit for product list');
-ScoutFlutter.logInfo('User completed checkout');
-ScoutFlutter.logWarning('Retry attempt 2 for API call');
-ScoutFlutter.logError('Payment gateway timeout');
-```
-
-## Dio Support
-
-For apps using Dio instead of `dart:io` HttpClient:
-
-```dart
-final dio = Dio();
-dio.interceptors.add(ScoutFlutter.dioInterceptor);
-```
-
-## Annotate Widgets
-
-For custom tap labels on widgets the SDK can't auto-label:
-
-```dart
-RumUserActionAnnotation(
-  description: 'Add to cart',
-  child: MyCustomWidget(),
-)
-```
-
-## Event Filtering
-
-Drop or modify events before export:
-
-```dart
-ScoutFlutterConfig(
-  serviceName: 'my-app',
-  endpoint: 'https://...',
-  beforeSend: (event) {
-    // Drop health check requests
-    if (event['http.url']?.toString().contains('/health') == true) {
-      return null;
-    }
-    // Scrub PII
-    event.remove('enduser.email');
-    return event;
-  },
-)
-```
+Every telemetry callback, error handler, and export path is wrapped in `try/catch`. If any telemetry operation fails, it silently degrades — your app continues running normally.
 
 ## Sampling
 
-By default Scout samples **1% of sessions** to keep telemetry volume low at scale. Sampling decisions are made per session — when a session is sampled, every span in it is recorded; otherwise the whole session is dropped (so traces stay coherent).
+By default Scout samples **1% of sessions** (`sessionSampleRate: 1.0`). When a session is sampled, every span in it is recorded; otherwise the whole session is dropped, so session traces stay coherent.
 
-Errors and crashes bypass the session sample rate by default — `error`, `native_crash`, `app_crash`, `anr`, and `ui_hang` spans are always exported regardless of whether the session was sampled. Set `alwaysCaptureErrors: false` to make error-class spans respect the same gate.
-
-Adjust the rate with `sessionSampleRate` (0.0–100.0). Sampling is enforced at the OpenTelemetry layer, so it also applies to spans emitted by auto-instrumentation and direct `tracer.startSpan` calls.
-
-## Configuration
-
-```dart
-ScoutFlutterConfig(
-  // Required
-  serviceName: 'my-app',
-  endpoint: 'https://your-otel-endpoint:4318',
-
-  // App identity
-  serviceVersion: '1.0.0',
-  environment: 'production',
-  secure: true,                          // HTTPS (default: true)
-  headers: {'Authorization': 'Bearer ...'}, // OTLP export headers
-
-  // Auto-instrumentation (all default to true)
-  enableAutoTapTracking: true,
-  enableErrorTracking: true,
-  enableLifecycleTracking: true,
-  enableStartupTracking: true,
-  enableConnectivityTracking: true,
-  enablePerformanceMetrics: true,        // FPS, memory, CPU, frame times
-  enableLongTaskDetection: true,
-  enableAnrDetection: true,
-  enableNetworkTracking: true,           // HTTP request tracking
-  enableLogging: true,                   // Structured log export
-
-  // Thresholds
-  longTaskThresholdMs: 100,              // Min 20ms
-  anrThresholdMs: 5000,                  // Min 1000ms
-
-  // Sessions
-  sessionSampleRate: 1.0,               // 0.0-100.0 (default: 1.0 = 1% of sessions)
-  alwaysCaptureErrors: true,            // Errors/crashes bypass sampleRate (default: true)
-  sessionTimeoutMinutes: 30,            // Rotate after inactivity
-
-  // Network
-  firstPartyHosts: ['api.example.com'], // Receive traceparent headers
-  ignoreUrlPatterns: [RegExp(r'/health')],
-
-  // Logging
-  capturePrintStatements: false,        // Capture debugPrint() as logs
-
-  // Storage
-  maxOfflineStorageMb: 5,              // Offline queue cap
-
-  // Filtering
-  beforeSend: (event) => event,        // Modify/drop events
-
-  // Custom
-  resourceAttributes: {'deployment.region': 'us-east-1'},
-  customGestureDetector: (widget) => null,
-
-  // Diagnostics
-  debugLogging: false,                  // Verbose [scout] logs to debugPrint
-)
-```
+Error- and crash-class spans (`error`, `native_crash`, `app_crash`, `anr`, `ui_hang`) bypass the session sample rate by default. Set `alwaysCaptureErrors: false` to subject them to the same gate. Sampling is enforced at the OpenTelemetry layer, so it also applies to spans emitted by auto-instrumentation and direct `tracer.startSpan` calls.
 
 ## Debug Logging
 
@@ -248,12 +84,28 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 [scout] log [warn] Retry attempt 2
 ```
 
+## Public API surface
+
+- `ScoutFlutter.initialize(config: ...)` — boot the SDK
+- `ScoutFlutter.navigatorObserver` — navigation/screen tracking
+- `ScoutFlutter.dioInterceptor` — Dio HTTP interceptor (apps using `dart:io` HttpClient are tracked automatically)
+- `ScoutFlutter.observeScroll(child: ...)` — scroll-depth instrumentation
+- `ScoutFlutter.logEvent(name, attributes: ...)` — custom business events
+- `ScoutFlutter.logInfo/logWarning/logError/logDebug(...)` — structured logging
+- `ScoutFlutter.addBreadcrumb(type, message)` — error context
+- `ScoutFlutter.reportError(error, stackTrace)` — manual error reporting
+- `ScoutFlutter.setUser(id: ..., attributes: ...)` / `clearUser()` — user identity
+- `RumUserActionAnnotation` — custom tap labels for non-standard widgets
+- `beforeSend` config — filter or modify events before export
+
+See the [integration guide](doc/scout-flutter-guide.md) for full configuration reference and usage examples.
+
 ## Architecture
 
-Scout Flutter exports telemetry via OpenTelemetry Protocol (OTLP) over HTTP:
-- **Traces** — Spans for user interactions, navigation, crashes, HTTP requests
-- **Metrics** — Histograms and gauges for frame times, memory, CPU
-- **Logs** — Structured log records with severity levels
+Telemetry is exported via OpenTelemetry Protocol (OTLP) over HTTP:
+- **Traces** — spans for user interactions, navigation, crashes, HTTP requests
+- **Metrics** — histograms and gauges for frame times, memory, CPU
+- **Logs** — structured log records with severity levels
 
 Data flows through a `beforeSend` filter, then to the OTLP collector. Failed exports are queued offline and retried when connectivity returns.
 
