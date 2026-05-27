@@ -1,3 +1,8 @@
+## 0.1.8
+
+### Fixes
+- Warm start measurement no longer depends on the `onInactive` lifecycle callback; `_measureWarmStart()` starts its own stopwatch on resume
+
 ## 0.1.7
 
 ### Docs

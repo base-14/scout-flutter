@@ -65,7 +65,6 @@ class ScoutFlutter {
   static NativeVitalsCollector? _nativeVitalsCollector;
   static Stopwatch? _coldStartStopwatch;
   static bool _coldStartRecorded = false;
-  static Stopwatch? _warmStartStopwatch;
   static String _connectivityType = 'unknown';
   static dynamic _meter;
   static SessionManager? _sessionManager;
@@ -652,13 +651,6 @@ class ScoutFlutter {
 
   static void _setupLifecycleTracking() {
     _lifecycleListener = AppLifecycleListener(
-      onInactive: () {
-        try {
-          if (_config?.enableStartupTracking == true) {
-            _warmStartStopwatch = Stopwatch()..start();
-          }
-        } catch (_) {}
-      },
       onPause: () {
         try {
           _sessionManager?.onBackground();
@@ -714,9 +706,7 @@ class ScoutFlutter {
   }
 
   static void _measureWarmStart() {
-    if (_warmStartStopwatch == null) return;
-    final stopwatch = _warmStartStopwatch!;
-    _warmStartStopwatch = null;
+    final stopwatch = Stopwatch()..start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final duration = stopwatch.elapsed;
       stopwatch.stop();
@@ -1498,7 +1488,6 @@ class ScoutFlutter {
     _meter = null;
     _coldStartStopwatch = null;
     _coldStartRecorded = false;
-    _warmStartStopwatch = null;
     _connectivityType = 'unknown';
     _sessionManager = null;
     _logger = null;
