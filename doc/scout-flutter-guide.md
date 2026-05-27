@@ -11,14 +11,7 @@ Install from pub.dev:
 
   flutter pub add scout_flutter
 
-Or add it to your pubspec.yaml manually:
-
-dependencies:
-  scout_flutter: ^0.1.7
-
-Then run: flutter pub get
-
-Package page: https://pub.dev/packages/scout_flutter
+This pins the latest published version in your pubspec.yaml automatically. See the package page for the current version: https://pub.dev/packages/scout_flutter
 
 
 2. Initialize the SDK
