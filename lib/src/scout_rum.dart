@@ -50,6 +50,9 @@ class ScoutFlutter {
 
   static ScoutFlutterConfig? _config;
   static final BreadcrumbManager _breadcrumbManager = BreadcrumbManager();
+  // Holds breadcrumbs.json content from the crashed session so the
+  // native_crash drain path can attach them. Cleared after drain.
+  static String? _previousSessionBreadcrumbs;
   static Map<String, Object> _userAttributes = {};
   static GlobalTapDetector? _tapDetector;
   static LongTaskDetector? _longTaskDetector;
@@ -431,6 +434,7 @@ class ScoutFlutter {
     try {
       final previousCrash = await _crashDetector?.checkPreviousCrash();
       if (previousCrash != null) {
+        _previousSessionBreadcrumbs = previousCrash.breadcrumbs;
         // Extract error details from breadcrumbs for a self-contained crash span.
         String? lastErrorType;
         String? lastErrorMessage;
@@ -491,6 +495,7 @@ class ScoutFlutter {
     // All three feed the same `native_crash` span shape so the
     // backend doesn't need to branch on source.
     await _drainCrashReports();
+    _previousSessionBreadcrumbs = null;
 
     // Periodic offline flush (every 60 seconds)
     _offlineFlushTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -1025,13 +1030,9 @@ class ScoutFlutter {
     }
   }
 
-  /// Stack traces longer than this are truncated; the span carries
-  /// `error.was_truncated: true` so the backend can flag it.
-  static const _maxStackChars = 8000;
-
   /// Build the common `error.*` attribute bundle every emission site
-  /// uses. Centralises fingerprint computation, stack truncation, and
-  /// causes-chain walking so the three call sites stay in lockstep.
+  /// uses. Centralises fingerprint computation and causes-chain walking
+  /// so the three call sites stay in lockstep.
   static Map<String, Object> _errorAttributes({
     required String type,
     required Object error,
@@ -1040,10 +1041,7 @@ class ScoutFlutter {
     required String source,
     required String handling,
   }) {
-    final stackString = stackTrace?.toString() ?? '';
-    final wasTruncated = stackString.length > _maxStackChars;
-    final stack =
-        wasTruncated ? stackString.substring(0, _maxStackChars) : stackString;
+    final stack = stackTrace?.toString() ?? '';
 
     // Fingerprint: short stable hash of (error type + first stack frame
     // + message). Mirrors `error.fingerprint` in DD / scout_react —
@@ -1071,7 +1069,6 @@ class ScoutFlutter {
       'error.source': source,
       'error.source_type': 'flutter',
       'error.fingerprint': fingerprint,
-      if (wasTruncated) 'error.was_truncated': true,
       if (library != null && library.isNotEmpty) 'error.library': library,
       if (causes.isNotEmpty) 'error.causes_json': jsonEncode(causes),
       if (_appStartedAtMs != null)
@@ -1132,9 +1129,8 @@ class ScoutFlutter {
   /// `mach_code` data and an Android backend doesn't lose
   /// `subreason` / `tombstone`.
   static Map<String, Object> _crashAttributes(Map<String, dynamic> crash) {
-    Object? v(String k) => crash[k];
     String? s(String k) {
-      final x = v(k);
+      final x = crash[k];
       return x is String && x.isNotEmpty ? x : null;
     }
 
@@ -1144,63 +1140,30 @@ class ScoutFlutter {
       'crash.timestamp': s('crash_timestamp') ?? '',
     };
 
-    // Common platform fields
-    final passthroughString = <String, String>{
-      'crash.thread': 'crash_thread',
-      'crash.thread_name': 'crash_thread_name',
-      'crash.stack_trace': 'crash_stack_trace',
-      'crash.signal': 'crash_signal',
-      'crash.signal_code': 'crash_signal_code',
-      'crash.signal_address': 'crash_signal_address',
-      'crash.mach_exception': 'crash_mach_exception',
-      'crash.mach_code': 'crash_mach_code',
-      'crash.mach_subcode': 'crash_mach_subcode',
-      'crash.nsexception_name': 'crash_nsexception_name',
-      'crash.cpu_arch': 'crash_cpu_arch',
-      'crash.build_type': 'crash_build_type',
-      'crash.os_name': 'crash_os_name',
-      'crash.os_version': 'crash_os_version',
-      'crash.kernel_version': 'crash_kernel_version',
-      'crash.device_model': 'crash_device_model',
-      'crash.machine': 'crash_machine',
-      'crash.process_name': 'crash_process_name',
-      'crash.report_id': 'crash_report_id',
-      'crash.registers_json': 'crash_registers_json',
-      'crash.callstack_tree_json': 'crash_callstack_tree_json',
-      'crash.binary_images_json': 'crash_binary_images_json',
-      // Android-specific
-      'crash.abi': 'crash_abi',
-      'crash.build_fingerprint': 'crash_build_fingerprint',
-      'crash.kernel': 'crash_kernel',
-      'crash.registers': 'crash_registers',
-      'crash.memory_map': 'crash_memory_map',
-      'crash.tombstone': 'crash_tombstone',
-      'crash.app_version': 'crash_app_version',
-    };
-    passthroughString.forEach((dotKey, snakeKey) {
-      final value = s(snakeKey);
-      if (value != null) out[dotKey] = value;
-    });
+    for (final entry in crash.entries) {
+      final k = entry.key;
+      if (!k.startsWith('crash_')) continue;
+      if (k == 'crash_type' || k == 'crash_reason' || k == 'crash_timestamp') {
+        continue;
+      }
+      final dotKey = 'crash.${k.substring(6)}';
+      final value = entry.value;
+      if (value == null) continue;
+      if (value is String) {
+        if (value.isEmpty) continue;
+        out[dotKey] = value;
+      } else if (value is num || value is bool) {
+        out[dotKey] = value;
+      } else {
+        out[dotKey] = value.toString();
+      }
+    }
 
-    // Numeric platform fields
-    final passthroughNumeric = <String, String>{
-      'crash.pid': 'crash_pid',
-      'crash.tid': 'crash_tid',
-      'crash.uid': 'crash_uid',
-      'crash.process_uptime_secs': 'crash_process_uptime_secs',
-      'crash.subreason': 'crash_subreason',
-      'crash.exit_status': 'crash_exit_status',
-      'crash.importance': 'crash_importance',
-      'crash.pss_kb': 'crash_pss_kb',
-      'crash.rss_kb': 'crash_rss_kb',
-      'crash.death_timestamp_ms': 'crash_death_timestamp_ms',
-    };
-    passthroughNumeric.forEach((dotKey, snakeKey) {
-      final value = v(snakeKey);
-      if (value is num) out[dotKey] = value;
-    });
+    if (_previousSessionBreadcrumbs != null &&
+        _previousSessionBreadcrumbs!.isNotEmpty) {
+      out['breadcrumbs'] = _previousSessionBreadcrumbs!;
+    }
 
-    // Context attached to every span (session.id, enduser.*, etc.)
     out.addAll(_commonAttributes());
     return out;
   }

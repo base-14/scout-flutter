@@ -1,3 +1,13 @@
+## 0.1.9
+
+### Changes
+- iOS native crash reports now capture full device, OS, memory, app-state, and process context (sysctl-derived parent process, IDFV, boot time, foreground state at drain time)
+- Crashed-thread registers expose FAR / ESR / exception registers as flat attrs; full per-thread callstack tree and binary images are no longer truncated
+- KSCrash monitors expanded to include `userReported`, `system`, and `applicationState`
+- Previous session's breadcrumbs are attached to the `native_crash` span via a `breadcrumbs` attribute
+- Crash attribute forwarding switched to a generic `crash_*` → `crash.*` pass-through so new native fields surface without Dart changes
+- Dropped Dart-side stack-trace truncation and the `error.was_truncated` flag
+
 ## 0.1.8
 
 ### Fixes
