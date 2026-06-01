@@ -100,6 +100,11 @@ class ScoutFlutterConfig {
   /// Minutes of inactivity before rotating the session. Default 30.
   final int sessionTimeoutMinutes;
 
+  /// Maximum session lifetime in minutes. The session rotates the next time
+  /// its ID is read after this many minutes have elapsed since the session
+  /// started, regardless of activity. Default 60. Set to 0 to disable.
+  final int maxSessionDurationMinutes;
+
   /// Whether to enable structured log export via OTLP.
   final bool enableLogging;
 
@@ -158,6 +163,7 @@ class ScoutFlutterConfig {
     double sessionSampleRate = 1.0,
     this.alwaysCaptureErrors = true,
     this.sessionTimeoutMinutes = 30,
+    int maxSessionDurationMinutes = 60,
     this.enableLogging = true,
     this.capturePrintStatements = false,
     this.maxOfflineStorageMb = 5,
@@ -177,5 +183,7 @@ class ScoutFlutterConfig {
        sessionSampleRate =
            sessionSampleRate < 0.0
                ? 0.0
-               : (sessionSampleRate > 100.0 ? 100.0 : sessionSampleRate);
+               : (sessionSampleRate > 100.0 ? 100.0 : sessionSampleRate),
+       maxSessionDurationMinutes =
+           maxSessionDurationMinutes < 0 ? 0 : maxSessionDurationMinutes;
 }

@@ -130,5 +130,44 @@ void main() {
 
       expect(config.anrThresholdMs, 1000);
     });
+
+    test('maxSessionDurationMinutes defaults to 60', () {
+      final config = ScoutFlutterConfig(
+        serviceName: 'test-app',
+        endpoint: 'https://otel.example.com',
+      );
+
+      expect(config.maxSessionDurationMinutes, 60);
+    });
+
+    test('honors explicit maxSessionDurationMinutes', () {
+      final config = ScoutFlutterConfig(
+        serviceName: 'test-app',
+        endpoint: 'https://otel.example.com',
+        maxSessionDurationMinutes: 120,
+      );
+
+      expect(config.maxSessionDurationMinutes, 120);
+    });
+
+    test('allows maxSessionDurationMinutes of 0 to disable cap', () {
+      final config = ScoutFlutterConfig(
+        serviceName: 'test-app',
+        endpoint: 'https://otel.example.com',
+        maxSessionDurationMinutes: 0,
+      );
+
+      expect(config.maxSessionDurationMinutes, 0);
+    });
+
+    test('clamps negative maxSessionDurationMinutes to 0', () {
+      final config = ScoutFlutterConfig(
+        serviceName: 'test-app',
+        endpoint: 'https://otel.example.com',
+        maxSessionDurationMinutes: -5,
+      );
+
+      expect(config.maxSessionDurationMinutes, 0);
+    });
   });
 }

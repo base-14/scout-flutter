@@ -412,6 +412,7 @@ class ScoutFlutter {
     _sessionManager = SessionManager(
       sampleRate: config.sessionSampleRate,
       timeoutMinutes: config.sessionTimeoutMinutes,
+      maxDurationMinutes: config.maxSessionDurationMinutes,
       onSessionChanged:
           (sessionId, sampled) =>
               _debugLogger.session(sessionId: sessionId, sampled: sampled),

@@ -66,6 +66,65 @@ void main() {
       expect(m.sessionId, isNot(equals(id1)));
     });
 
+    test('rotates session when sessionId is read after max duration', () {
+      var now = DateTime(2026, 1, 1, 12, 0);
+      final m = SessionManager(
+        sampleRate: 100.0,
+        maxDurationMinutes: 60,
+        clock: () => now,
+      );
+      final id1 = m.sessionId;
+      now = DateTime(2026, 1, 1, 12, 59);
+      expect(m.sessionId, equals(id1));
+      now = DateTime(2026, 1, 1, 13, 0);
+      expect(m.sessionId, isNot(equals(id1)));
+    });
+
+    test('maxDurationMinutes: 0 disables the cap', () {
+      var now = DateTime(2026, 1, 1, 12, 0);
+      final m = SessionManager(
+        sampleRate: 100.0,
+        maxDurationMinutes: 0,
+        clock: () => now,
+      );
+      final id1 = m.sessionId;
+      now = DateTime(2026, 1, 2, 12, 0);
+      expect(m.sessionId, equals(id1));
+    });
+
+    test('does not re-rotate within the same window after a cap rotation', () {
+      var now = DateTime(2026, 1, 1, 12, 0);
+      final m = SessionManager(
+        sampleRate: 100.0,
+        maxDurationMinutes: 60,
+        clock: () => now,
+      );
+      m.sessionId;
+      now = DateTime(2026, 1, 1, 13, 0);
+      final id2 = m.sessionId;
+      now = DateTime(2026, 1, 1, 13, 30);
+      expect(m.sessionId, equals(id2));
+      now = DateTime(2026, 1, 1, 14, 0);
+      expect(m.sessionId, isNot(equals(id2)));
+    });
+
+    test('cap rotation fires onSessionChanged with the new id', () {
+      var now = DateTime(2026, 1, 1, 12, 0);
+      final changes = <String>[];
+      final m = SessionManager(
+        sampleRate: 100.0,
+        maxDurationMinutes: 60,
+        clock: () => now,
+        onSessionChanged: (id, _) => changes.add(id),
+      );
+      final initial = changes.single;
+      now = DateTime(2026, 1, 1, 13, 0);
+      final rotated = m.sessionId;
+      expect(changes, hasLength(2));
+      expect(changes.last, equals(rotated));
+      expect(rotated, isNot(equals(initial)));
+    });
+
     test('rotateSession re-rolls sampling decision', () {
       // Use a sample rate that deterministically tests re-rolling.
       // With rate 0, sampling is always false. After rotation it should

@@ -12,6 +12,11 @@ class SessionManager {
   /// Duration of inactivity (in minutes) after which a new session is started.
   final int timeoutMinutes;
 
+  /// Maximum lifetime of a single session in minutes. When `> 0`, reads of
+  /// [sessionId] check elapsed time since the current session started and
+  /// rotate inline if the cap is exceeded. `0` disables the cap.
+  final int maxDurationMinutes;
+
   final Random _random = Random.secure();
 
   final DateTime Function() _clock;
@@ -21,6 +26,7 @@ class SessionManager {
   String _sessionId;
   bool _isSampled;
   DateTime? _backgroundTimestamp;
+  late DateTime _sessionStartTime;
 
   /// Creates a [SessionManager].
   ///
@@ -30,9 +36,11 @@ class SessionManager {
   SessionManager({
     required double sampleRate,
     this.timeoutMinutes = 30,
+    this.maxDurationMinutes = 0,
     DateTime Function()? clock,
     void Function(String sessionId, bool sampled)? onSessionChanged,
   }) : assert(sampleRate >= 0.0 && sampleRate <= 100.0),
+       assert(maxDurationMinutes >= 0),
        sampleRate = sampleRate.clamp(0.0, 100.0),
        _clock = clock ?? DateTime.now,
        _onSessionChanged = onSessionChanged,
@@ -40,11 +48,21 @@ class SessionManager {
        _isSampled = false {
     _sessionId = _generateUuidV4();
     _isSampled = _rollSampling();
+    _sessionStartTime = _clock();
     _onSessionChanged?.call(_sessionId, _isSampled);
   }
 
-  /// The current session ID (UUID v4).
-  String get sessionId => _sessionId;
+  /// The current session ID (UUID v4). When [maxDurationMinutes] is `> 0`,
+  /// reading this getter rotates the session if it has lived longer than the
+  /// cap — the returned ID is then the new one.
+  String get sessionId {
+    if (maxDurationMinutes > 0 &&
+        _clock().difference(_sessionStartTime) >=
+            Duration(minutes: maxDurationMinutes)) {
+      rotateSession();
+    }
+    return _sessionId;
+  }
 
   /// Whether the current session is sampled.
   bool get isSampled => _isSampled;
@@ -73,6 +91,7 @@ class SessionManager {
   void rotateSession() {
     _sessionId = _generateUuidV4();
     _isSampled = _rollSampling();
+    _sessionStartTime = _clock();
     _onSessionChanged?.call(_sessionId, _isSampled);
   }
 

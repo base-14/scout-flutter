@@ -1,3 +1,8 @@
+## 0.1.10
+
+### Changes
+- New `ScoutFlutterConfig.maxSessionDurationMinutes` (default 60, set 0 to disable) — caps total session lifetime; the next read of `sessionId` after the cap elapses rotates the session inline
+
 ## 0.1.9
 
 ### Changes
