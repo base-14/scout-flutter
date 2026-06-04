@@ -29,7 +29,7 @@ typedef BeforeSendCallback =
 class ScoutFlutterConfig {
   final String serviceName;
   final String endpoint;
-  final String serviceVersion;
+  final String? serviceVersion;
   final String? environment;
   final Map<String, String>? resourceAttributes;
   final bool enableAutoTapTracking;
@@ -140,7 +140,7 @@ class ScoutFlutterConfig {
   const ScoutFlutterConfig({
     required this.serviceName,
     required this.endpoint,
-    this.serviceVersion = '1.0.0',
+    this.serviceVersion,
     this.environment,
     this.resourceAttributes,
     this.enableAutoTapTracking = true,

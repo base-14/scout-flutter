@@ -9,6 +9,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'auto_name_navigator_observer.dart';
@@ -330,9 +331,13 @@ class ScoutFlutter {
               ),
             );
 
+    final resolvedServiceVersion = await _resolveServiceVersion(
+      config.serviceVersion,
+    );
+
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
-      serviceVersion: config.serviceVersion,
+      serviceVersion: resolvedServiceVersion,
       tracerName: kScopeName,
       tracerVersion: kScopeVersion,
       endpoint: httpEndpoint,
@@ -362,7 +367,7 @@ class ScoutFlutter {
     _debugLogger.init(
       serviceName: config.serviceName,
       endpoint: httpEndpoint,
-      version: config.serviceVersion,
+      version: resolvedServiceVersion,
       sampleRate: config.sessionSampleRate,
       alwaysCaptureErrors: config.alwaysCaptureErrors,
     );
@@ -900,6 +905,21 @@ class ScoutFlutter {
       },
     );
     _nativeVitalsCollector!.start();
+  }
+
+  static Future<String> _resolveServiceVersion(String? configured) async {
+    if (configured != null && configured.isNotEmpty) {
+      return configured;
+    }
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final v = info.version;
+      final b = info.buildNumber;
+      if (v.isEmpty) return '1.0.0';
+      return b.isEmpty ? v : '$v+$b';
+    } catch (_) {
+      return '1.0.0';
+    }
   }
 
   static Future<Map<String, Object>> _collectDeviceAttributes() async {

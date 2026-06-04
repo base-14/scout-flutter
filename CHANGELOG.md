@@ -1,3 +1,9 @@
+## 0.1.12
+
+### Fixes
+- `service.version` now auto-detected from `PackageInfo` (pubspec `version` field) when `ScoutFlutterConfig.serviceVersion` is not set. Previously defaulted to a hardcoded `1.0.0`, masking the integrator's real app version on every span. Explicitly setting `serviceVersion` still wins. `ScoutFlutterConfig.serviceVersion` is now `String?`
+- `AutoNameNavigatorObserver` no longer surfaces `Instance of 'CupertinoPage<dynamic>'` as the screen name for go_router (and any other declarative router whose `Page` subclass relies on the default `Object.toString()`). The observer now falls through to the subtree walk and reports the user-defined page widget's class name
+
 ## 0.1.11
 
 ### Breaking changes

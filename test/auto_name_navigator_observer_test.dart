@@ -14,6 +14,21 @@ class _TestPageB extends StatelessWidget {
   Widget build(BuildContext context) => const Scaffold(body: Text('Page B'));
 }
 
+/// Mimics go_router's CupertinoPage: a [Page] subclass whose
+/// `toString()` returns `Instance of 'X<Y>'` rather than a useful name.
+class _BareCupertinoLikePage extends Page<void> {
+  const _BareCupertinoLikePage({required this.child});
+  final Widget child;
+
+  @override
+  String toString() => "Instance of 'CupertinoPage<dynamic>'";
+
+  @override
+  Route<void> createRoute(BuildContext context) {
+    return MaterialPageRoute<void>(settings: this, builder: (_) => child);
+  }
+}
+
 void main() {
   group('AutoNameNavigatorObserver', () {
     testWidgets('extracts name from RouteSettings when provided', (
@@ -87,6 +102,38 @@ void main() {
       expect(loadTimes.last.key, '/page_b');
       expect(loadTimes.last.value.inMicroseconds, greaterThan(0));
     });
+
+    testWidgets(
+      'falls through to subtree walk for Page subclass without descriptive toString',
+      (tester) async {
+        final pushes = <String>[];
+        final observer = AutoNameNavigatorObserver(
+          onScreenChanged: (name) => pushes.add(name),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(navigatorObservers: [observer], home: const _TestPageA()),
+        );
+
+        final navState = tester.state<NavigatorState>(find.byType(Navigator));
+        navState.push<void>(
+          _BareCupertinoLikePage(
+            child: const _TestPageB(),
+          ).createRoute(navState.context),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          pushes.any((n) => n.contains('_TestPageB')),
+          isTrue,
+          reason:
+              'Page subclasses whose toString returns "Instance of \'...\'" '
+              'must not surface as the screen name; should fall through to '
+              'subtree walk.',
+        );
+        expect(pushes.any((n) => n.startsWith("Instance of '")), isFalse);
+      },
+    );
 
     testWidgets('reports screen load time on push without RouteSettings name', (
       tester,

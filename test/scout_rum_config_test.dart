@@ -11,7 +11,7 @@ void main() {
 
       expect(config.serviceName, 'test-app');
       expect(config.endpoint, 'https://otel.example.com');
-      expect(config.serviceVersion, '1.0.0');
+      expect(config.serviceVersion, isNull);
       expect(config.enableAutoTapTracking, true);
       expect(config.enableErrorTracking, true);
       expect(config.enableLifecycleTracking, true);

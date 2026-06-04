@@ -6,17 +6,10 @@ String? _extractScreenName(Route<dynamic> route) {
   final name = route.settings.name;
   if (name != null) return name;
 
-  // Strategy 2: Page-based routes (go_router, declarative nav).
-  final settings = route.settings;
-  try {
-    if (settings is Page) {
-      final pageString = settings.toString();
-      if (pageString.isNotEmpty && pageString != 'null') {
-        return pageString;
-      }
-    }
-  } catch (_) {}
-
+  // Strategy 2 (Page-based routes) falls through to the post-frame subtree
+  // walk, since Page subclasses' default toString returns diagnostic output
+  // like `CupertinoPage<dynamic>("null", null, null)` or `Instance of '...'`,
+  // not a useful screen name.
   return null;
 }
 
