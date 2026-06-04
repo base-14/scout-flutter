@@ -77,14 +77,14 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 }
             }
             "simulateCrash" -> {
-                // Force a real native crash so the NDK signal handler /
-                // ApplicationExitInfo path fires. Dart `exit()` is graceful
-                // and no crash reporter intercepts it.
                 Thread {
-                    Thread.sleep(50) // let the method-channel reply land
-                    @Suppress("RemoveExplicitTypeArguments")
-                    val obj: String? = null
-                    obj!!.length // NullPointerException → JVM uncaught handler
+                    Thread.sleep(50)
+                    try {
+                        CrashReporter.nativeSimulateCrash()
+                    } catch (_: UnsatisfiedLinkError) {
+                        val obj: String? = null
+                        obj!!.length
+                    }
                 }.start()
                 result.success(null)
             }
@@ -99,6 +99,13 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 } else {
                     result.success(ExitInfoCollector.collect(ctx))
                 }
+            }
+            "setBreadcrumbs" -> {
+                // Android crash capture is file-based (CrashDetector persists
+                // breadcrumbs.json across launches); the native side does not
+                // need to receive the payload. Acknowledge so Dart doesn't
+                // see MissingPluginException.
+                result.success(null)
             }
             else -> result.notImplemented()
         }

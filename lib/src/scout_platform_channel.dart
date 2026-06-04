@@ -144,6 +144,19 @@ class ScoutPlatformChannel {
     };
   }
 
+  /// Push the latest breadcrumb buffer to the native side so each native
+  /// crash report carries the breadcrumbs current at crash time. On iOS
+  /// this lands in `KSCrash.userInfo` and rides into the crash report.
+  /// On Android the call is a no-op — the on-disk file (kept across
+  /// launches by [CrashDetector]) is the authoritative source there.
+  static Future<void> setBreadcrumbs(String json) async {
+    try {
+      await _channel.invokeMethod('setBreadcrumbs', {'json': json});
+    } catch (_) {
+      // MissingPluginException on platforms without an impl — expected.
+    }
+  }
+
   /// iOS only — handler for sub-ANR UI hangs (≥ `iosHangThresholdMs`).
   static void setUiHangHandler(void Function(int durationMs) onHang) {
     _ensureRouter();

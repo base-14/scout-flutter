@@ -1,3 +1,22 @@
+## 0.1.11
+
+### Breaking changes
+- User identity is now emitted under the `user.*` namespace instead of `enduser.*`. `setUser(id: 'u1', attributes: {'email': '...', 'phone': '...'})` produces `user.id`, `user.email`, `user.phone`. The auto-attached anonymous identifier is now `user.anonymous_id`. Dashboards / queries that filter on `enduser.*` must move to `user.*`
+- `setUser` no longer requires `id` — `setUser(attributes: {'tenant': 'acme'})` is valid. Bare attribute keys are auto-prefixed with `user.`; keys already starting with `user.` pass through unchanged
+
+### Breadcrumbs on crash spans
+- iOS `native_crash` spans now carry per-report `breadcrumbs` baked into `KSCrash.userInfo` at crash time, so the trail matches the crashed session — including delayed MetricKit reports and multi-crash drains
+- Android `native_crash` spans now also carry breadcrumbs in the backgrounded-then-killed case: when `ApplicationExitInfo` surfaces a crash with no live in-process marker, `_drainCrashReports` consumes the on-disk `breadcrumbs.json` left over from the paused session
+- Dart-side `addBreadcrumb` forwards every breadcrumb to the native side via a new `setBreadcrumbs` method channel (no-op on Android)
+- `CrashDetector` no longer deletes `breadcrumbs.json` on the `paused` shutdown path
+
+### Android `native_crash` — iOS-parity overhaul
+- Existing scout_crash_handler `.so` is now actually exercised: `simulateCrash` routes through a new `nativeSimulateCrash` JNI export that derefs NULL so real signal-handler coverage is testable end-to-end
+- C handler bugs fixed: `crash.timestamp` is ISO 8601 (was raw Unix); `crash.kernel_version` reads via `uname()` (was failing /proc/version on newer Android); process uptime computed via `CLOCK_BOOTTIME` (was failing /proc parse under SELinux)
+- Android key names aligned to iOS: `crash.abi → crash.cpu_arch`, `crash.registers → crash.registers_json`, `crash.kernel → crash.kernel_version`. Integer `crash.signal_code` (raw `si_code`) plus string `crash.signal_code_name` both emitted
+- New attributes on Android `native_crash`: `machine`, `device_model`, `os_name`, `os_version`, `os_build`, `app_uuid` (per-install UUID), `bundle_id`, `bundle_version`, `app_version`, `app_name`, `process_name`, `app_executable`, `executable_path`, `device_app_hash`, `idfv`, `build_type`, `environment`, `build_configuration`, `time_zone`, `system_boot_time_iso`, `app_start_time`, `translated`, `gid`, `signal` (string), `signal_number` (raw signum), `fault_address`, `exception_register`, `thread_count`, `thread_index`, `app_active`, `app_active_time_secs`, `app_background_time_secs`, `app_active_time_since_last_crash_secs`, `app_background_time_since_last_crash_secs`, `app_launches_since_last_crash`, `app_sessions_since_launch`, `app_sessions_since_last_crash`, `memory_free_bytes`, `memory_size_bytes`, `storage_size_bytes`, `storage_free_bytes`, `time_since_boot_secs`, `binary_images_json` (structured /proc/self/maps), `binary_images_count`, `report_id` (per-crash UUID), `report_type`, `report_version`, `parent_proc_name`, `parent_pid`
+- Drain context attached at Dart-side drain time: `crash.drain_app_state`, `crash.drain_process_start_time`, `crash.drain_uptime_secs`
+
 ## 0.1.10
 
 ### Changes

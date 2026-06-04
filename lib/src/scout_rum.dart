@@ -85,7 +85,7 @@ class ScoutFlutter {
   static CrashDetector? _crashDetector;
   static ScoutDebugLogger _debugLogger = const ScoutDebugLogger(enabled: false);
   // Cross-session stable identifier — persisted to disk on first init,
-  // hydrated on every subsequent launch. Attached as `enduser.anonymous_id`
+  // hydrated on every subsequent launch. Attached as `user.anonymous_id`
   // on every span so backends can group sessions by user without
   // requiring an authenticated identity. Cleared by `clearUser()`.
   static String? _anonymousId;
@@ -1104,6 +1104,7 @@ class ScoutFlutter {
   /// in-process JVM + JNI on Android, MetricKit, ApplicationExitInfo —
   /// and emit each as a `native_crash` span with the full attribute set.
   static Future<void> _drainCrashReports() async {
+    final drainStart = DateTime.now().toUtc();
     final sources = <Future<List<Map<String, dynamic>>>>[
       ScoutPlatformChannel.getNativeCrashReports(),
       ScoutPlatformChannel.getMetricKitReports(),
@@ -1112,9 +1113,22 @@ class ScoutFlutter {
     final results = await Future.wait(
       sources.map((f) => f.catchError((_) => <Map<String, dynamic>>[])),
     );
+    final totalReports = results.fold<int>(0, (sum, list) => sum + list.length);
+    if (totalReports > 0 && _previousSessionBreadcrumbs == null) {
+      _previousSessionBreadcrumbs =
+          await _crashDetector?.consumeOrphanedBreadcrumbs();
+    }
+    final drainEnd = DateTime.now().toUtc();
+    final drainUptimeSecs =
+        drainEnd.difference(drainStart).inMilliseconds / 1000.0;
+    final drainState = isInitialized ? 'initialized' : 'initializing';
     for (final list in results) {
       for (final crash in list) {
         try {
+          crash['crash_drain_app_state'] = drainState;
+          crash['crash_drain_process_start_time'] =
+              drainStart.toIso8601String();
+          crash['crash_drain_uptime_secs'] = drainUptimeSecs;
           _emitSpan('native_crash', _crashAttributes(crash));
         } catch (_) {
           /* never crash the host while reporting a crash */
@@ -1160,7 +1174,23 @@ class ScoutFlutter {
       }
     }
 
-    if (_previousSessionBreadcrumbs != null &&
+    // Per-report breadcrumbs (iOS): KSCrash.userInfo['breadcrumbs'] is baked
+    // into each crash report at crash time, so it always matches the crashed
+    // session even when delayed reports surface multiple launches later.
+    String? perReport;
+    final userInfoRaw = crash['crash_user_info_json'];
+    if (userInfoRaw is String && userInfoRaw.isNotEmpty) {
+      try {
+        final decoded = json.decode(userInfoRaw);
+        if (decoded is Map && decoded['breadcrumbs'] is String) {
+          final s = decoded['breadcrumbs'] as String;
+          if (s.isNotEmpty) perReport = s;
+        }
+      } catch (_) {}
+    }
+    if (perReport != null) {
+      out['breadcrumbs'] = perReport;
+    } else if (_previousSessionBreadcrumbs != null &&
         _previousSessionBreadcrumbs!.isNotEmpty) {
       out['breadcrumbs'] = _previousSessionBreadcrumbs!;
     }
@@ -1173,7 +1203,9 @@ class ScoutFlutter {
   static void _recordAndPersistBreadcrumb(String type, String message) {
     try {
       _breadcrumbManager.record(type, message);
-      _crashDetector?.persistBreadcrumbs(_safeBreadcrumbsJson());
+      final json = _safeBreadcrumbsJson();
+      _crashDetector?.persistBreadcrumbs(json);
+      ScoutPlatformChannel.setBreadcrumbs(json);
     } catch (_) {
       // Never crash the app due to telemetry failure.
     }
@@ -1206,10 +1238,21 @@ class ScoutFlutter {
     }
   }
 
-  /// Set user identity. Attached to subsequent spans.
-  /// [id] is required. Pass any additional attributes as key-value pairs.
-  static void setUser({required String id, Map<String, Object>? attributes}) {
-    _userAttributes = {'enduser.id': id, ...?attributes};
+  /// Set user identity. Attached to subsequent spans as `user.*` attributes.
+  ///
+  /// [id] is optional — pass null/empty to skip the `user.id` tag.
+  /// Bare attribute keys are auto-prefixed with `user.`. Keys that already
+  /// start with `user.` are passed through unchanged.
+  static void setUser({String? id, Map<String, Object>? attributes}) {
+    final out = <String, Object>{};
+    if (id != null && id.isNotEmpty) {
+      out['user.id'] = id;
+    }
+    attributes?.forEach((k, v) {
+      final key = k.startsWith('user.') ? k : 'user.$k';
+      out[key] = v;
+    });
+    _userAttributes = out;
   }
 
   /// Clear user identity.
@@ -1221,7 +1264,7 @@ class ScoutFlutter {
     final m = _latestScroll;
     return {
       ..._userAttributes,
-      if (_anonymousId != null) 'enduser.anonymous_id': _anonymousId!,
+      if (_anonymousId != null) 'user.anonymous_id': _anonymousId!,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
@@ -1257,7 +1300,7 @@ class ScoutFlutter {
   }
 
   /// Current user ID, if set.
-  static String? get userId => _userAttributes['enduser.id'] as String?;
+  static String? get userId => _userAttributes['user.id'] as String?;
 
   /// Current user attributes.
   static Map<String, Object> get userAttributes =>

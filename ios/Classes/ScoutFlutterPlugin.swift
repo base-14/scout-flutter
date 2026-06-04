@@ -1,4 +1,5 @@
 import Flutter
+import KSCrash
 
 public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel
@@ -129,6 +130,18 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         case "getMetricKitReports":
             let reports = ScoutMetricKitSubscriber.shared.drainPending()
             result(reports)
+
+        case "setBreadcrumbs":
+            let args = call.arguments as? [String: Any]
+            let json = (args?["json"] as? String) ?? ""
+            var info = KSCrash.shared.userInfo ?? [:]
+            if json.isEmpty {
+                info.removeValue(forKey: "breadcrumbs")
+            } else {
+                info["breadcrumbs"] = json
+            }
+            KSCrash.shared.userInfo = info
+            result(nil)
 
         default:
             result(FlutterMethodNotImplemented)

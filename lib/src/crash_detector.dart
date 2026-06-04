@@ -27,12 +27,13 @@ class CrashDetector {
       final data = json.decode(content) as Map<String, dynamic>;
       final status = data['status'] as String?;
 
-      // "paused" means the app went to background normally — not a crash.
+      // "paused" means the app went to background normally — not a crash
+      // from the Dart side's perspective. We delete the marker but KEEP
+      // breadcrumbs.json so a delayed native-crash report drained on this
+      // launch (KSCrash / MetricKit / ApplicationExitInfo) can still
+      // attach breadcrumbs that were live at the time of the crash.
       if (status == 'paused') {
         await file.delete();
-        try {
-          if (await _breadcrumbFile.exists()) await _breadcrumbFile.delete();
-        } catch (_) {}
         return null;
       }
 
@@ -95,6 +96,24 @@ class CrashDetector {
   /// Updates the marker back to "started" when returning to foreground.
   Future<void> markSessionResumed() async {
     await _updateStatus('started');
+  }
+
+  /// Read and delete `breadcrumbs.json` if it exists, returning the contents.
+  ///
+  /// Used by `_drainCrashReports` when a native crash report surfaces but the
+  /// session marker indicated a clean shutdown — typical for the `paused` →
+  /// process-killed sequence on Android, where `ApplicationExitInfo` surfaces
+  /// the crash post-mortem (sometimes launches later) without the in-process
+  /// marker ever flipping back to `started`.
+  Future<String?> consumeOrphanedBreadcrumbs() async {
+    try {
+      if (!await _breadcrumbFile.exists()) return null;
+      final json = await _breadcrumbFile.readAsString();
+      await _breadcrumbFile.delete();
+      return json.isNotEmpty ? json : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Persists breadcrumbs to disk so they survive a crash.
