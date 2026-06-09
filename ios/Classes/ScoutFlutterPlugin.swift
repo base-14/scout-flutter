@@ -131,6 +131,29 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
             let reports = ScoutMetricKitSubscriber.shared.drainPending()
             result(reports)
 
+        case "getTimezone":
+            result(TimeZone.current.identifier)
+
+        case "getOsBuild":
+            let osVerStr = ProcessInfo.processInfo.operatingSystemVersionString
+            if let range = osVerStr.range(of: "Build "),
+               let end = osVerStr.range(of: ")", range: range.upperBound..<osVerStr.endIndex) {
+                result(String(osVerStr[range.upperBound..<end.lowerBound]))
+            } else {
+                result("")
+            }
+
+        case "getCpuArch":
+            #if arch(arm64)
+            result("arm64")
+            #elseif arch(x86_64)
+            result("amd64")
+            #elseif arch(arm)
+            result("arm32")
+            #else
+            result("")
+            #endif
+
         case "setBreadcrumbs":
             let args = call.arguments as? [String: Any]
             let json = (args?["json"] as? String) ?? ""

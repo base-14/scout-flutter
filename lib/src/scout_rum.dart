@@ -951,9 +951,41 @@ class ScoutFlutter {
       if (data['isPhysicalDevice'] != null) {
         attrs['device.is_physical'] = data['isPhysicalDevice'].toString();
       }
+      if (Platform.isIOS) {
+        attrs['os.name'] = 'iOS';
+        final sysVer = data['systemVersion']?.toString();
+        if (sysVer != null && sysVer.isNotEmpty) attrs['os.version'] = sysVer;
+        final uts = data['utsname'];
+        if (uts is Map) {
+          final machine = uts['machine']?.toString();
+          final isPhys = data['isPhysicalDevice'] == true;
+          if (isPhys && machine != null && machine.isNotEmpty) {
+            attrs['device.name'] = machine;
+          }
+        }
+      } else if (Platform.isAndroid && info is AndroidDeviceInfo) {
+        attrs['os.name'] = 'Android';
+        final release = info.version.release;
+        if (release.isNotEmpty) attrs['os.version'] = release;
+        if (info.model.isNotEmpty) attrs['device.name'] = info.model;
+        if (info.supportedAbis.isNotEmpty) {
+          attrs['host.arch'] = _normalizeArch(info.supportedAbis.first);
+        }
+      }
     } catch (_) {
       // Device info unavailable
     }
+
+    try {
+      final view = WidgetsBinding.instance.platformDispatcher.views.isNotEmpty
+          ? WidgetsBinding.instance.platformDispatcher.views.first
+          : null;
+      if (view != null) {
+        final size = view.physicalSize / view.devicePixelRatio;
+        final shortest = size.shortestSide;
+        attrs['device.type'] = shortest >= 600 ? 'tablet' : 'mobile';
+      }
+    } catch (_) {}
 
     try {
       final connectivity = await Connectivity().checkConnectivity();
@@ -963,7 +995,41 @@ class ScoutFlutter {
       }
     } catch (_) {}
 
+    try {
+      final raw = Platform.localeName;
+      if (raw.isNotEmpty) {
+        final base = raw.split('.').first;
+        attrs['device.locale'] = base.replaceAll('_', '-');
+      }
+    } catch (_) {}
+
+    try {
+      final tz = await ScoutPlatformChannel.getTimezone();
+      if (tz.isNotEmpty) attrs['device.timezone'] = tz;
+    } catch (_) {}
+
+    try {
+      final build = await ScoutPlatformChannel.getOsBuild();
+      if (build.isNotEmpty) attrs['os.build'] = build;
+    } catch (_) {}
+
+    if (Platform.isIOS) {
+      try {
+        final arch = await ScoutPlatformChannel.getCpuArch();
+        if (arch.isNotEmpty) attrs['host.arch'] = arch;
+      } catch (_) {}
+    }
+
     return attrs;
+  }
+
+  static String _normalizeArch(String raw) {
+    final v = raw.toLowerCase();
+    if (v.startsWith('arm64') || v == 'aarch64') return 'arm64';
+    if (v == 'x86_64' || v == 'amd64') return 'amd64';
+    if (v.startsWith('armeabi') || v == 'arm') return 'arm32';
+    if (v == 'x86' || v == 'i386' || v == 'i686') return 'x86';
+    return raw;
   }
 
   static FlutterExceptionHandler? _wrappedFlutterErrorHandler;

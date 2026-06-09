@@ -100,6 +100,15 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     result.success(ExitInfoCollector.collect(ctx))
                 }
             }
+            "getTimezone" -> {
+                result.success(java.util.TimeZone.getDefault().id)
+            }
+            "getOsBuild" -> {
+                result.success(android.os.Build.DISPLAY ?: "")
+            }
+            "getCpuArch" -> {
+                result.success(android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+            }
             "setBreadcrumbs" -> {
                 // Android crash capture is file-based (CrashDetector persists
                 // breadcrumbs.json across launches); the native side does not

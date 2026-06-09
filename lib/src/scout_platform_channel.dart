@@ -75,6 +75,33 @@ class ScoutPlatformChannel {
     }
   }
 
+  static Future<String> getTimezone() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getTimezone');
+      return result ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<String> getOsBuild() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getOsBuild');
+      return result ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<String> getCpuArch() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getCpuArch');
+      return result ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   static Future<Map<String, dynamic>> getMemoryUsage() async {
     final result = await _channel.invokeMapMethod<String, dynamic>(
       'getMemoryUsage',

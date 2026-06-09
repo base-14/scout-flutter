@@ -1,3 +1,14 @@
+## 0.1.13
+
+### Features
+- `device.locale` and `device.timezone` added as resource attributes on every span, metric, and log. Locale comes from `Platform.localeName` normalized to BCP-47 (e.g. `en-US`); timezone is the IANA identifier (e.g. `Asia/Kolkata`) sourced from a new `getTimezone` platform-channel method backed by `TimeZone.current.identifier` (iOS) and `TimeZone.getDefault().id` (Android). No permission prompt, no new packages, ships on every signal including `native_crash` and error spans
+- `device.type` (`mobile` / `tablet`, derived from logical screen shortest-side) added as a resource attribute on every signal
+- `device.name` populated from the real hardware identifier — iOS `utsname.machine` (e.g. `iPhone15,2`) on physical devices, Android `Build.MODEL` (e.g. `Pixel 8a`)
+- `os.name` normalized to `iOS` / `Android` (replacing the lowercase `host.os.name`/`os.type` defaults)
+- `os.version` now ships as a clean version string (iOS `systemVersion` e.g. `26.3.1`, Android `Build.VERSION.RELEASE` e.g. `14`) — previously the iOS value was the raw `"Version 26.3.1 (Build 23D8133)"` blob
+- `os.build` added — iOS `kern.osversion` sysctl (e.g. `23D8133`), Android `Build.DISPLAY`
+- `host.arch` now reports the real CPU architecture (`arm64` / `amd64` / `arm32` / `x86`) — iOS via compile-time arch check, Android via `Build.SUPPORTED_ABIS[0]` normalized. Fixes a dartastic-otel default that was setting `host.arch` to the hostname
+
 ## 0.1.12
 
 ### Fixes
