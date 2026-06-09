@@ -977,9 +977,10 @@ class ScoutFlutter {
     }
 
     try {
-      final view = WidgetsBinding.instance.platformDispatcher.views.isNotEmpty
-          ? WidgetsBinding.instance.platformDispatcher.views.first
-          : null;
+      final view =
+          WidgetsBinding.instance.platformDispatcher.views.isNotEmpty
+              ? WidgetsBinding.instance.platformDispatcher.views.first
+              : null;
       if (view != null) {
         final size = view.physicalSize / view.devicePixelRatio;
         final shortest = size.shortestSide;
