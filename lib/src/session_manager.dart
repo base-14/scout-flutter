@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 /// Manages RUM session identity, rotation, and sampling.
@@ -27,6 +30,7 @@ class SessionManager {
   bool _isSampled;
   DateTime? _backgroundTimestamp;
   late DateTime _sessionStartTime;
+  File? _storeFile;
 
   /// Creates a [SessionManager].
   ///
@@ -52,6 +56,63 @@ class SessionManager {
     _onSessionChanged?.call(_sessionId, _isSampled);
   }
 
+  Future<void> start({required Directory directory}) async {
+    try {
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+      _storeFile = File('${directory.path}/scout_session.json');
+      if (await _storeFile!.exists()) {
+        final raw = await _storeFile!.readAsString();
+        final data = json.decode(raw) as Map<String, dynamic>;
+        final id = data['id'] as String?;
+        final startedAtMs = data['startedAt'] as int?;
+        final lastActiveAtMs = data['lastActiveAt'] as int?;
+        final sampled = data['sampled'] as bool?;
+        if (id != null &&
+            id.isNotEmpty &&
+            startedAtMs != null &&
+            lastActiveAtMs != null &&
+            sampled != null) {
+          final now = _clock();
+          final startedAt = DateTime.fromMillisecondsSinceEpoch(startedAtMs);
+          final lastActiveAt = DateTime.fromMillisecondsSinceEpoch(
+            lastActiveAtMs,
+          );
+          final withinIdle =
+              now.difference(lastActiveAt) < Duration(minutes: timeoutMinutes);
+          final withinLifetime =
+              maxDurationMinutes == 0 ||
+              now.difference(startedAt) < Duration(minutes: maxDurationMinutes);
+          if (withinIdle && withinLifetime) {
+            _sessionId = id;
+            _isSampled = sampled;
+            _sessionStartTime = startedAt;
+            _onSessionChanged?.call(_sessionId, _isSampled);
+            unawaited(_persist());
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+    unawaited(_persist());
+  }
+
+  Future<void> _persist() async {
+    final f = _storeFile;
+    if (f == null) return;
+    try {
+      final data = <String, Object>{
+        'v': 1,
+        'id': _sessionId,
+        'startedAt': _sessionStartTime.millisecondsSinceEpoch,
+        'lastActiveAt': _clock().millisecondsSinceEpoch,
+        'sampled': _isSampled,
+      };
+      await f.writeAsString(json.encode(data));
+    } catch (_) {}
+  }
+
   /// The current session ID (UUID v4). When [maxDurationMinutes] is `> 0`,
   /// reading this getter rotates the session if it has lived longer than the
   /// cap — the returned ID is then the new one.
@@ -70,6 +131,7 @@ class SessionManager {
   /// Call when the app moves to the background.
   void onBackground() {
     _backgroundTimestamp = _clock();
+    unawaited(_persist());
   }
 
   /// Call when the app returns to the foreground.
@@ -85,6 +147,7 @@ class SessionManager {
       }
     }
     _backgroundTimestamp = null;
+    unawaited(_persist());
   }
 
   /// Generates a new session ID and re-rolls the sampling decision.
@@ -93,6 +156,7 @@ class SessionManager {
     _isSampled = _rollSampling();
     _sessionStartTime = _clock();
     _onSessionChanged?.call(_sessionId, _isSampled);
+    unawaited(_persist());
   }
 
   /// Generates a UUID v4 string using [Random.secure].

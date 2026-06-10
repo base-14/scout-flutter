@@ -1,3 +1,8 @@
+## 0.1.14
+
+### Features
+- `session.id` now persists across process launches (including crashes). On init, `SessionManager` hydrates `<docs>/scout_session.json` and resumes the prior session if it's within `sessionTimeoutMinutes` of `lastActiveAt` and within `maxSessionDurationMinutes` of `startedAt` — otherwise mints a new session. Matches scout-react's storage-backed semantics. Crash spans (`app_crash`, `native_crash`) and post-relaunch telemetry now land on the same `session.id` as the pre-crash events, so a single "show events for session X" query returns the complete arc. Persisted state is `{v, id, startedAt, lastActiveAt, sampled}`; `sampled` is preserved so resumed sessions don't re-roll the sampling decision. Persistence fires on `start`, `rotateSession`, `onBackground`, and `onForeground` — not on every span, to keep write cost bounded.
+
 ## 0.1.13
 
 ### Features

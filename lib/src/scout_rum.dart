@@ -423,6 +423,11 @@ class ScoutFlutter {
               _debugLogger.session(sessionId: sessionId, sampled: sampled),
     );
 
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      await _sessionManager!.start(directory: docsDir);
+    } catch (_) {}
+
     // Offline queue + crash detection
     final offlineDir = Directory('${tempDir.path}/scout_offline');
     _offlineQueue = OfflineQueue(
