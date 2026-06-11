@@ -1,3 +1,8 @@
+## 0.1.16
+
+### Features
+- `session.start_time` added as a span attribute on every emitted span. ISO 8601 UTC string sourced from `SessionManager.sessionStartTime`, which is persisted to `<docs>/scout_session.json` and rehydrated on resume — so the attribute remains consistent across process restarts within the same session, and rotates with `session.id`. On `app_crash` spans (which retain the crashed session's `session.id`), `session.start_time` is set to the crashed session's `startedAt` so the pairing is preserved
+
 ## 0.1.15
 
 ### Features

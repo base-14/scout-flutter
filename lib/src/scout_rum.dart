@@ -475,6 +475,8 @@ class ScoutFlutter {
         final crashTime = previousCrash.lastActiveAt ?? previousCrash.startedAt;
         _emitSpan('app_crash', {
           'session.id': previousCrash.sessionId,
+          'session.start_time':
+              previousCrash.startedAt.toUtc().toIso8601String(),
           'crash.previous_session_id': previousCrash.sessionId,
           'crash.started_at': previousCrash.startedAt.toIso8601String(),
           'crash.timestamp': crashTime.toIso8601String(),
@@ -1375,6 +1377,9 @@ class ScoutFlutter {
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
+      if (_sessionManager != null)
+        'session.start_time':
+            _sessionManager!.sessionStartTime.toUtc().toIso8601String(),
       // DD parity: distinguishes user sessions from synthetic / ci-test
       // traffic. Today we only emit user-driven traffic, so this is
       // always 'user'.

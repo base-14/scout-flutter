@@ -128,6 +128,10 @@ class SessionManager {
   /// Whether the current session is sampled.
   bool get isSampled => _isSampled;
 
+  /// Wall-clock time when the current session started. Rehydrated from
+  /// disk on resume so it survives process restarts; reset on rotation.
+  DateTime get sessionStartTime => _sessionStartTime;
+
   /// Call when the app moves to the background.
   void onBackground() {
     _backgroundTimestamp = _clock();

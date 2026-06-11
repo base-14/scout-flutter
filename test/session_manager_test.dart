@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scout_flutter/src/session_manager.dart';
 
@@ -123,6 +125,53 @@ void main() {
       expect(changes, hasLength(2));
       expect(changes.last, equals(rotated));
       expect(rotated, isNot(equals(initial)));
+    });
+
+    test('sessionStartTime is set at construction', () {
+      final t0 = DateTime(2026, 1, 1, 12, 0);
+      final m = SessionManager(sampleRate: 100.0, clock: () => t0);
+      expect(m.sessionStartTime, equals(t0));
+    });
+
+    test('rotateSession resets sessionStartTime', () {
+      var now = DateTime(2026, 1, 1, 12, 0);
+      final m = SessionManager(sampleRate: 100.0, clock: () => now);
+      final start1 = m.sessionStartTime;
+      now = DateTime(2026, 1, 1, 13, 30);
+      m.rotateSession();
+      expect(m.sessionStartTime, equals(now));
+      expect(m.sessionStartTime, isNot(equals(start1)));
+    });
+
+    test('sessionStartTime rehydrates from disk on resume', () async {
+      final dir = await Directory.systemTemp.createTemp('scout_session_test_');
+      try {
+        var now = DateTime(2026, 1, 1, 12, 0);
+        final m1 = SessionManager(
+          sampleRate: 100.0,
+          timeoutMinutes: 30,
+          clock: () => now,
+        );
+        await m1.start(directory: dir);
+        final originalId = m1.sessionId;
+        final originalStart = m1.sessionStartTime;
+
+        now = DateTime(2026, 1, 1, 12, 10);
+        final m2 = SessionManager(
+          sampleRate: 100.0,
+          timeoutMinutes: 30,
+          clock: () => now,
+        );
+        await m2.start(directory: dir);
+
+        expect(m2.sessionId, equals(originalId));
+        expect(
+          m2.sessionStartTime.millisecondsSinceEpoch,
+          equals(originalStart.millisecondsSinceEpoch),
+        );
+      } finally {
+        await dir.delete(recursive: true);
+      }
     });
 
     test('rotateSession re-rolls sampling decision', () {
