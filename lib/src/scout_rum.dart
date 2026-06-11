@@ -1026,6 +1026,15 @@ class ScoutFlutter {
       } catch (_) {}
     }
 
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (info.packageName.isNotEmpty) {
+        attrs['app.bundle_id'] = info.packageName;
+      }
+      if (info.version.isNotEmpty) attrs['app.version'] = info.version;
+      if (info.buildNumber.isNotEmpty) attrs['app.build'] = info.buildNumber;
+    } catch (_) {}
+
     return attrs;
   }
 
@@ -1126,6 +1135,10 @@ class ScoutFlutter {
   /// Build the common `error.*` attribute bundle every emission site
   /// uses. Centralises fingerprint computation and causes-chain walking
   /// so the three call sites stay in lockstep.
+  static final RegExp _dartBuildIdRegex = RegExp(
+    r"build_id:\s*'?([0-9a-fA-F]+)'?",
+  );
+
   static Map<String, Object> _errorAttributes({
     required String type,
     required Object error,
@@ -1135,6 +1148,7 @@ class ScoutFlutter {
     required String handling,
   }) {
     final stack = stackTrace?.toString() ?? '';
+    final buildId = _dartBuildIdRegex.firstMatch(stack)?.group(1);
 
     // Fingerprint: short stable hash of (error type + first stack frame
     // + message). Mirrors `error.fingerprint` in DD / scout_react —
@@ -1162,6 +1176,7 @@ class ScoutFlutter {
       'error.source': source,
       'error.source_type': 'flutter',
       'error.fingerprint': fingerprint,
+      if (buildId != null && buildId.isNotEmpty) 'dart.build_id': buildId,
       if (library != null && library.isNotEmpty) 'error.library': library,
       if (causes.isNotEmpty) 'error.causes_json': jsonEncode(causes),
       if (_appStartedAtMs != null)
@@ -1434,10 +1449,10 @@ class ScoutFlutter {
       if (!(_sessionManager?.isSampled ?? true)) return;
 
       final attributes = _applyBeforeSend('span', 'http.request', {
-        'http.method': data.method,
-        'http.url': data.url.toString(),
-        'http.status_code': data.statusCode,
-        'http.response_content_length': data.responseSize,
+        'http.request.method': data.method,
+        'url.full': data.url.toString(),
+        'http.response.status_code': data.statusCode,
+        'http.response.body.size': data.responseSize,
         'http.duration_ms': data.durationMs,
         if (data.error != null) 'http.error': data.error!,
         ..._commonAttributes(),

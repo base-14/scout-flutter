@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
   s.author           = { 'base-14' => 'info@base14.dev' }
   s.source           = { :path => '.' }
-  s.source_files     = 'Classes/**/*'
+  s.source_files     = 'scout_flutter/Sources/scout_flutter/**/*.swift'
   s.dependency 'Flutter'
   s.dependency 'KSCrash', '~> 2.0.0-rc'
   s.platform         = :ios, '12.0'

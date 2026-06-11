@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(KSCrash)
 import KSCrash
+#else
+import KSCrashRecording
+#endif
 import UIKit
 
 class CrashReporter {

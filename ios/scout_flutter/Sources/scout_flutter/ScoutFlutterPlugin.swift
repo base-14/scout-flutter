@@ -1,5 +1,9 @@
 import Flutter
+#if canImport(KSCrash)
 import KSCrash
+#else
+import KSCrashRecording
+#endif
 
 public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel

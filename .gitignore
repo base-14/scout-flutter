@@ -34,6 +34,10 @@ pubspec.lock
 **/macos/Flutter/GeneratedPluginRegistrant.swift
 **/macos/Flutter/ephemeral/
 
+# Swift Package Manager
+**/.build/
+**/Package.resolved
+
 # Linux / Windows
 **/linux/flutter/generated_*
 **/linux/flutter/ephemeral/

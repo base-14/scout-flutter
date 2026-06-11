@@ -1,3 +1,13 @@
+## 0.1.15
+
+### Features
+- HTTP attribute names migrated to stable OTel semantic conventions on `http.request` spans: `http.method` → `http.request.method`, `http.url` → `url.full`, `http.status_code` → `http.response.status_code`, `http.response_content_length` → `http.response.body.size`. `http.duration_ms` and `http.error` kept as scout extensions (no semconv equivalent). Backends that previously queried the legacy keys must update; coalescing with the old names is not provided
+- `app.bundle_id`, `app.version`, `app.build` added as resource attributes on every signal — sourced from `package_info_plus` (iOS `CFBundleIdentifier` / Android `applicationId`, semver version, build number). Supports backend symbolication artifact matching (`(app_identifier, app_version, build_number, platform, arch)` tuple) without parsing the combined `service.version` string
+- `dart.build_id` extracted from the Dart VM crash header and stamped on `error` spans when present. Populated only in AOT builds with `--split-debug-info` (debug builds have no build_id and the attribute is omitted). Lets the backend symbolizer match Dart `dart_symbols` artifacts via an indexed column instead of full-text trace parsing
+
+### Build
+- Swift Package Manager support — ships `ios/scout_flutter/Package.swift` with KSCrash declared as an SPM dependency (`KSCrashRecording` module). iOS Swift sources moved from `ios/Classes/` to `ios/scout_flutter/Sources/scout_flutter/`. Imports use conditional `#if canImport(KSCrash) … #else import KSCrashRecording #endif` so both CocoaPods and SPM consumers work. The Flutter SPM warning "scout_flutter does not support Swift Package Manager" no longer fires; verified via `flutter build ios` with SPM mode enabled (`flutter config --enable-swift-package-manager`)
+
 ## 0.1.14
 
 ### Features
