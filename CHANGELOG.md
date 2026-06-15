@@ -1,3 +1,8 @@
+## 0.1.17
+
+### Removed
+- `simulateCrash` and `simulateAnr` removed from the SDK surface end-to-end: Dart wrapper (`ScoutPlatformChannel`), Android Kotlin method-channel handlers (`ScoutFlutterPlugin.kt`), the `nativeSimulateCrash` JNIEXPORT in `scout_crash_handler.c`, the matching `external fun nativeSimulateCrash()` declaration in `CrashReporter.kt`, and the iOS Swift cases in `ScoutFlutterPlugin.swift`. A production SDK should not ship crash-induction primitives — any host code (or another plugin sharing the binary messenger) could previously invoke `MethodChannel('com.base14.scout_flutter').invokeMethod('simulateCrash')` and kill the user's app, even without importing the now-removed Dart helpers. Test harnesses that need to exercise the crash-capture pipeline should implement their own platform-level null-deref / main-thread-block locally in the example app or test target; the SDK's capture path (KSCrash, JVM uncaught handler, NDK signal handler, MetricKit, ApplicationExitInfo) is unchanged and continues to ingest real crashes the same way
+
 ## 0.1.16
 
 ### Features

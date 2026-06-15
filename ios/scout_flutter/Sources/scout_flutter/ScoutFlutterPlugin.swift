@@ -73,23 +73,6 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
             uiHangWatchdog?.stop()
             uiHangWatchdog = nil
             result(nil)
-        case "simulateAnr":
-            let args = call.arguments as? [String: Any]
-            let durationMs = args?["durationMs"] as? Int ?? 6000
-            // Block native main thread to trigger the ANR watchdog
-            Thread.sleep(forTimeInterval: Double(durationMs) / 1000.0)
-            result(nil)
-        case "simulateCrash":
-            // Real crash so KSCrash actually fires. Dart `exit(0/1)` is a
-            // graceful shutdown that no crash reporter intercepts.
-            // The dispatch.async hop keeps Flutter's method-channel
-            // accounting from screaming about a missing result().
-            DispatchQueue.main.async {
-                // Null-pointer write — synthesises EXC_BAD_ACCESS / SIGSEGV.
-                let ptr: UnsafeMutablePointer<Int32>? = nil
-                ptr!.pointee = 0
-            }
-            result(nil)
         case "getMemoryUsage":
             var info = mach_task_basic_info()
             var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4

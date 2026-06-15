@@ -420,6 +420,4 @@ object CrashReporter {
     )
     private external fun nativeSetForegroundState(inForeground: Boolean, active: Boolean)
     private external fun nativeSetSessionCounters(sinceLaunch: Int, sinceLastCrash: Int)
-
-    external fun nativeSimulateCrash()
 }

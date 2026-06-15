@@ -44,20 +44,6 @@ void main() {
       expect(calls.first.method, 'stopAnrDetection');
     });
 
-    test('simulateAnr sends correct method and default args', () async {
-      await ScoutPlatformChannel.simulateAnr();
-
-      expect(calls, hasLength(1));
-      expect(calls.first.method, 'simulateAnr');
-      expect(calls.first.arguments, {'durationMs': 6000});
-    });
-
-    test('simulateAnr sends custom duration', () async {
-      await ScoutPlatformChannel.simulateAnr(durationMs: 3000);
-
-      expect(calls.first.arguments, {'durationMs': 3000});
-    });
-
     test('getMemoryUsage returns platform data', () async {
       final result = await ScoutPlatformChannel.getMemoryUsage();
 

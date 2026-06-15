@@ -46,12 +46,6 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 anrWatchdog = null
                 result.success(null)
             }
-            "simulateAnr" -> {
-                val durationMs = call.argument<Int>("durationMs")?.toLong() ?: 6000L
-                // Block the native main thread to trigger the ANR watchdog
-                Thread.sleep(durationMs)
-                result.success(null)
-            }
             "getMemoryUsage" -> {
                 val runtime = Runtime.getRuntime()
                 val usedMemory = runtime.totalMemory() - runtime.freeMemory()
@@ -75,18 +69,6 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 } catch (e: Exception) {
                     result.success(mapOf("ticks" to -1L))
                 }
-            }
-            "simulateCrash" -> {
-                Thread {
-                    Thread.sleep(50)
-                    try {
-                        CrashReporter.nativeSimulateCrash()
-                    } catch (_: UnsatisfiedLinkError) {
-                        val obj: String? = null
-                        obj!!.length
-                    }
-                }.start()
-                result.success(null)
             }
             "getNativeCrashReports" -> {
                 val reports = CrashReporter.getPendingCrashReports()

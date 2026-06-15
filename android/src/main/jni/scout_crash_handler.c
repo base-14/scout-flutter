@@ -1050,16 +1050,6 @@ static void crash_signal_handler(int sig, siginfo_t *info, void *context) {
     raise(sig);
 }
 
-JNIEXPORT void JNICALL
-Java_com_base14_scout_1flutter_CrashReporter_nativeSimulateCrash(
-    JNIEnv *env, jclass clazz
-) {
-    (void)env;
-    (void)clazz;
-    volatile int *p = 0;
-    *p = 0;
-}
-
 static void copy_jstring(JNIEnv *env, jstring s, char *dst, size_t dst_sz) {
     if (!s || dst_sz == 0) { if (dst_sz) dst[0] = '\0'; return; }
     const char *p = (*env)->GetStringUTFChars(env, s, NULL);

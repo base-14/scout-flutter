@@ -57,24 +57,6 @@ class ScoutPlatformChannel {
     }
   }
 
-  /// Simulate an ANR by blocking the native main thread.
-  /// Only for testing — triggers the ANR watchdog.
-  static Future<void> simulateAnr({int durationMs = 6000}) async {
-    await _channel.invokeMethod('simulateAnr', {'durationMs': durationMs});
-  }
-
-  /// Simulate a real native crash so KSCrash (iOS) / the NDK signal
-  /// handler (Android) actually fires and writes a report to disk.
-  /// On next launch, `getNativeCrashReports` returns it. Only for
-  /// testing — calling this will terminate the app.
-  static Future<void> simulateCrash() async {
-    try {
-      await _channel.invokeMethod('simulateCrash');
-    } catch (_) {
-      // Process is about to die — exception is irrelevant.
-    }
-  }
-
   static Future<String> getTimezone() async {
     try {
       final result = await _channel.invokeMethod<String>('getTimezone');
