@@ -10,6 +10,7 @@ import android.os.Debug
 import android.os.StatFs
 import android.os.SystemClock
 import android.provider.Settings
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.PrintWriter
@@ -338,6 +339,7 @@ object CrashReporter {
 
         val reports = mutableListOf<Map<String, Any>>()
         val files = dir.listFiles { file -> file.name.startsWith(CRASH_FILE_PREFIX) } ?: return emptyList()
+        val nativeLibDir = appContext?.applicationInfo?.nativeLibraryDir
 
         for (file in files.sortedBy { it.lastModified() }) {
             try {
@@ -349,7 +351,13 @@ object CrashReporter {
                 for (k in boolKeys) if (json.has(k)) report[k] = json.optBoolean(k, false)
                 for (k in rawJsonKeys) if (json.has(k)) {
                     val arr = json.optJSONArray(k)
-                    if (arr != null) report[k] = arr.toString()
+                    if (arr != null) {
+                        report[k] = if (k == "crash_binary_images_json") {
+                            enrichBinaryImagesWithBuildIds(arr, nativeLibDir)
+                        } else {
+                            arr.toString()
+                        }
+                    }
                 }
                 if (json.has("crash_signal_code_name")) {
                     report["crash_signal_code_name"] = json.optString("crash_signal_code_name", "")
@@ -360,6 +368,33 @@ object CrashReporter {
         }
 
         return reports
+    }
+
+    /**
+     * Adds each native image's ELF GNU build-id as `uuid` so NDK frames can be
+     * matched to uploaded symbols (the analog of an iOS dSYM UUID, SPEC §5.4).
+     *
+     * The signal handler only captures each image's basename + base address
+     * (async-signal-safe); the build-id is recovered here, on a normal thread,
+     * by resolving the basename against the app's nativeLibraryDir and reading
+     * the on-disk `.so` ([ElfBuildId]). Images we can't resolve — system
+     * libraries, or libs not extracted to disk — are left without a uuid: they
+     * simply won't match an uploaded artifact and their frames stay raw.
+     */
+    private fun enrichBinaryImagesWithBuildIds(arr: JSONArray, nativeLibDir: String?): String {
+        if (nativeLibDir == null) return arr.toString()
+        val cache = HashMap<String, String?>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            if (obj.has("uuid")) continue
+            val name = obj.optString("path", "").ifEmpty { obj.optString("name", "") }
+            if (name.isEmpty()) continue
+            val buildId = cache.getOrPut(name) {
+                ElfBuildId.read(if (name.startsWith("/")) name else "$nativeLibDir/$name")
+            }
+            if (buildId != null) obj.put("uuid", buildId)
+        }
+        return arr.toString()
     }
 
     private fun writeCrashReport(thread: Thread, throwable: Throwable) {
