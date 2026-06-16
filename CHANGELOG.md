@@ -1,3 +1,8 @@
+## 0.1.18
+
+### Features
+- Android NDK native-crash images now carry their ELF GNU build-id as `uuid` in `crash.binary_images_json`, enabling backend symbolication of `.so` frames (the analog of an iOS dSYM UUID). The signal handler stays async-signal-safe (it only captures each image's base + name); the build-id is recovered at report-assembly time on a normal thread by resolving the image name against the app's `nativeLibraryDir` and reading `NT_GNU_BUILD_ID` from the on-disk library (`ElfBuildId`). Images that can't be resolved — system libraries, or libs not extracted to disk — are left without a `uuid` and their frames stay raw. iOS dSYM images already carry a per-image `uuid` (from KSCrash) and are unchanged
+
 ## 0.1.17
 
 ### Removed
