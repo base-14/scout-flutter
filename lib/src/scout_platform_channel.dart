@@ -75,6 +75,15 @@ class ScoutPlatformChannel {
     }
   }
 
+  static Future<bool> isDeviceCompromised() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isDeviceCompromised');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<String> getCpuArch() async {
     try {
       final result = await _channel.invokeMethod<String>('getCpuArch');

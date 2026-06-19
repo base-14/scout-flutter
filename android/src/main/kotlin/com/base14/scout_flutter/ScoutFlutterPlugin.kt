@@ -91,6 +91,9 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "getCpuArch" -> {
                 result.success(android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
             }
+            "isDeviceCompromised" -> {
+                result.success(isDeviceRooted())
+            }
             "setBreadcrumbs" -> {
                 // Android crash capture is file-based (CrashDetector persists
                 // breadcrumbs.json across launches); the native side does not
@@ -99,6 +102,53 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 result.success(null)
             }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun isDeviceRooted(): Boolean {
+        return try {
+            if (android.os.Build.TAGS?.contains("test-keys") == true) return true
+            val rootPaths = arrayOf(
+                "/system/bin/su", "/system/xbin/su", "/sbin/su",
+                "/system/app/Superuser.apk", "/data/local/su",
+                "/data/local/bin/su", "/data/local/xbin/su",
+                "/system/sd/xbin/su", "/system/bin/failsafe/su",
+                "/su/bin/su", "/sbin/.magisk", "/cache/.disable_magisk",
+                "/dev/.magisk.unblock"
+            )
+            for (path in rootPaths) {
+                if (java.io.File(path).exists()) return true
+            }
+            var p: Process? = null
+            try {
+                p = Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
+                val found = p.inputStream.bufferedReader().use { it.readLine() != null }
+                if (found) return true
+            } catch (_: Throwable) {
+            } finally {
+                try { p?.destroy() } catch (_: Throwable) {}
+            }
+            val pm = context?.packageManager
+            if (pm != null) {
+                val rootPackages = arrayOf(
+                    "com.devadvance.rootcloak",
+                    "com.devadvance.rootcloakplus",
+                    "com.koushikdutta.superuser",
+                    "com.thirdparty.superuser",
+                    "eu.chainfire.supersu",
+                    "com.noshufou.android.su",
+                    "com.topjohnwu.magisk"
+                )
+                for (pkg in rootPackages) {
+                    try {
+                        pm.getPackageInfo(pkg, 0)
+                        return true
+                    } catch (_: android.content.pm.PackageManager.NameNotFoundException) {}
+                }
+            }
+            false
+        } catch (_: Throwable) {
+            false
         }
     }
 }

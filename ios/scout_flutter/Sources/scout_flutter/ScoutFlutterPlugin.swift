@@ -141,6 +141,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
             result("")
             #endif
 
+        case "isDeviceCompromised":
+            result(isJailbroken())
+
         case "setBreadcrumbs":
             let args = call.arguments as? [String: Any]
             let json = (args?["json"] as? String) ?? ""
@@ -156,5 +159,40 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    private func isJailbroken() -> Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        let paths = [
+            "/Applications/Cydia.app",
+            "/Library/MobileSubstrate/MobileSubstrate.dylib",
+            "/bin/bash",
+            "/usr/sbin/sshd",
+            "/etc/apt",
+            "/private/var/lib/apt/",
+            "/private/var/lib/cydia",
+            "/usr/libexec/ssh-keysign",
+            "/usr/libexec/sftp-server",
+            "/Applications/Sileo.app",
+            "/Applications/Zebra.app"
+        ]
+        let fm = FileManager.default
+        for path in paths {
+            if fm.fileExists(atPath: path) { return true }
+        }
+        if ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] != nil {
+            return true
+        }
+        let probe = "/private/scout_jb_probe.txt"
+        do {
+            try "probe".write(toFile: probe, atomically: true, encoding: .utf8)
+            try? fm.removeItem(atPath: probe)
+            return true
+        } catch {
+            return false
+        }
+        #endif
     }
 }

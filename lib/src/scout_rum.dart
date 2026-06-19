@@ -55,6 +55,7 @@ class ScoutFlutter {
   // native_crash drain path can attach them. Cleared after drain.
   static String? _previousSessionBreadcrumbs;
   static Map<String, Object> _userAttributes = {};
+  static Map<String, Object> _sessionAttributes = {};
   static GlobalTapDetector? _tapDetector;
   static LongTaskDetector? _longTaskDetector;
   static AppLifecycleListener? _lifecycleListener;
@@ -488,6 +489,7 @@ class ScoutFlutter {
           if (previousCrash.breadcrumbs != null)
             'breadcrumbs': previousCrash.breadcrumbs!,
           ..._userAttributes,
+          ..._sessionAttributes,
           if (_connectivityType != 'unknown')
             'network.connection.type': _connectivityType,
         });
@@ -1029,6 +1031,11 @@ class ScoutFlutter {
     }
 
     try {
+      final compromised = await ScoutPlatformChannel.isDeviceCompromised();
+      attrs['device.is_jail_broken'] = compromised.toString();
+    } catch (_) {}
+
+    try {
       final info = await PackageInfo.fromPlatform();
       if (info.packageName.isNotEmpty) {
         attrs['app.bundle_id'] = info.packageName;
@@ -1369,10 +1376,28 @@ class ScoutFlutter {
     _userAttributes = {};
   }
 
+  /// Set session-scoped attributes attached to every subsequent span,
+  /// metric, and log for the rest of this session. Keys are passed
+  /// through verbatim (no auto-prefix). Replaces any previously set
+  /// session attributes. Call [clearSessionAttributes] to wipe.
+  static void setSessionAttributes(Map<String, Object> attributes) {
+    _sessionAttributes = Map<String, Object>.from(attributes);
+  }
+
+  /// Clear session-scoped attributes.
+  static void clearSessionAttributes() {
+    _sessionAttributes = {};
+  }
+
+  /// Current session-scoped attributes (read-only view).
+  static Map<String, Object> get sessionAttributes =>
+      Map.unmodifiable(_sessionAttributes);
+
   static Map<String, Object> _commonAttributes() {
     final m = _latestScroll;
     return {
       ..._userAttributes,
+      ..._sessionAttributes,
       if (_anonymousId != null) 'user.anonymous_id': _anonymousId!,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
@@ -1495,6 +1520,7 @@ class ScoutFlutter {
         'session.id': _sessionManager?.sessionId ?? '',
         if (_currentScreenName != null) 'screen.name': _currentScreenName!,
         ..._userAttributes,
+        ..._sessionAttributes,
         ...?entry.attributes,
       };
 
@@ -1593,6 +1619,7 @@ class ScoutFlutter {
     _config = null;
     _breadcrumbManager.clear();
     _userAttributes = {};
+    _sessionAttributes = {};
     _tapDetector?.stop();
     _tapDetector = null;
     _longTaskDetector?.stop();
