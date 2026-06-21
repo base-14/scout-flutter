@@ -30,7 +30,7 @@ class CrashDetector {
       // "paused" means the app went to background normally — not a crash
       // from the Dart side's perspective. We delete the marker but KEEP
       // breadcrumbs.json so a delayed native-crash report drained on this
-      // launch (KSCrash / MetricKit / ApplicationExitInfo) can still
+      // launch (native crash reporter / MetricKit / ApplicationExitInfo) can still
       // attach breadcrumbs that were live at the time of the crash.
       if (status == 'paused') {
         await file.delete();

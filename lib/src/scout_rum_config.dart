@@ -58,7 +58,7 @@ class ScoutFlutterConfig {
   /// iOS only — threshold in milliseconds for sub-ANR UI hangs detected
   /// by a continuous CFRunLoop watchdog. Fires `ui_hang` spans for any
   /// main-thread block longer than this, complementing the slower ANR
-  /// detector and KSCrash's mainThreadDeadlock monitor (which only
+  /// detector and the native main-thread-deadlock monitor (which only
   /// fires at 5 s+).
   ///
   /// Default 250 (Apple's hang-detector baseline). Min 50 (anything
@@ -126,6 +126,7 @@ class ScoutFlutterConfig {
   final int offlineMaxTraceItems;
   final int offlineMaxMetricItems;
   final int offlineMaxLogItems;
+  final int maxTombstoneBytes;
 
   /// Callback to filter/modify events before export.
   final BeforeSendCallback? beforeSend;
@@ -171,9 +172,11 @@ class ScoutFlutterConfig {
     this.offlineMaxTraceItems = 5000,
     this.offlineMaxMetricItems = 2000,
     this.offlineMaxLogItems = 5000,
+    int maxTombstoneBytes = 131072,
     this.beforeSend,
     this.debugLogging = false,
-  }) : longTaskThresholdMs =
+  }) : maxTombstoneBytes = maxTombstoneBytes < 4096 ? 4096 : maxTombstoneBytes,
+       longTaskThresholdMs =
            longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,
        iosHangThresholdMs =

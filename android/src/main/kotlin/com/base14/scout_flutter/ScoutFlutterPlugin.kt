@@ -34,8 +34,12 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 val thresholdMs = call.argument<Int>("thresholdMs")?.toLong() ?: 5000L
                 anrWatchdog?.stop()
                 anrWatchdog = AnrWatchdog(thresholdMs) { durationMs ->
+                    val dump = ThreadDumpCollector.capture()
                     Handler(Looper.getMainLooper()).post {
-                        channel.invokeMethod("onAnrDetected", durationMs)
+                        val payload = HashMap<String, Any>()
+                        payload["duration"] = durationMs
+                        payload.putAll(dump)
+                        channel.invokeMethod("onAnrDetected", payload)
                     }
                 }
                 anrWatchdog?.start()
@@ -79,7 +83,8 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 if (ctx == null) {
                     result.success(emptyList<Map<String, Any>>())
                 } else {
-                    result.success(ExitInfoCollector.collect(ctx))
+                    val maxBytes = call.argument<Int>("maxTombstoneBytes") ?: 131072
+                    result.success(ExitInfoCollector.collect(ctx, maxBytes))
                 }
             }
             "getTimezone" -> {
@@ -94,6 +99,9 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "isDeviceCompromised" -> {
                 result.success(isDeviceRooted())
             }
+            "getBatteryDischargeRate" -> {
+                result.success(batteryDischargeRate())
+            }
             "setBreadcrumbs" -> {
                 // Android crash capture is file-based (CrashDetector persists
                 // breadcrumbs.json across launches); the native side does not
@@ -102,6 +110,20 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 result.success(null)
             }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun batteryDischargeRate(): Long? {
+        return try {
+            val ctx = context ?: return null
+            val bm = ctx.getSystemService(Context.BATTERY_SERVICE)
+                as? android.os.BatteryManager ?: return null
+            val current = bm.getLongProperty(
+                android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW
+            )
+            if (current == Long.MIN_VALUE || current == 0L) null else current
+        } catch (_: Throwable) {
+            null
         }
     }
 

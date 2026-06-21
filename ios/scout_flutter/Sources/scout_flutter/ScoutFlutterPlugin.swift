@@ -9,6 +9,7 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel
     private var anrWatchdog: AppHangWatchdog?
     private var uiHangWatchdog: AppHangWatchdog?
+    private var mainThreadPort: thread_t = thread_t(MACH_PORT_NULL)
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -33,6 +34,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "startAnrDetection":
+            if mainThreadPort == thread_t(MACH_PORT_NULL) {
+                mainThreadPort = ScoutThreadBacktrace.currentPort()
+            }
             let args = call.arguments as? [String: Any]
             let thresholdMs = args?["thresholdMs"] as? Int ?? 5000
             anrWatchdog?.stop()
@@ -40,8 +44,15 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 label: "anr",
                 thresholdMs: thresholdMs
             ) { [weak self] durationMs in
+                guard let self = self else { return }
+                let frames = ScoutThreadBacktrace.capture(self.mainThreadPort)
+                let mainStack = frames.joined(separator: "\n")
                 DispatchQueue.main.async {
-                    self?.channel.invokeMethod("onAnrDetected", arguments: durationMs)
+                    var payload: [String: Any] = ["duration": durationMs]
+                    if !mainStack.isEmpty {
+                        payload["main_thread_stack"] = mainStack
+                    }
+                    self.channel.invokeMethod("onAnrDetected", arguments: payload)
                 }
             }
             anrWatchdog?.start()

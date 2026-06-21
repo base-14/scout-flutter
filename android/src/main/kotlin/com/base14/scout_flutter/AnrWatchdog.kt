@@ -10,12 +10,14 @@ class AnrWatchdog(
     private var watchdogThread: Thread? = null
     @Volatile private var running = false
     @Volatile private var responded = true
+    private var inHang = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun start() {
         running = true
         responded = true
+        inHang = false
         watchdogThread = Thread({
             while (running) {
                 responded = false
@@ -28,7 +30,12 @@ class AnrWatchdog(
                 }
 
                 if (!responded && running) {
-                    onAnrDetected(thresholdMs)
+                    if (!inHang) {
+                        inHang = true
+                        onAnrDetected(thresholdMs)
+                    }
+                } else {
+                    inHang = false
                 }
             }
         }, "scout-anr-watchdog")

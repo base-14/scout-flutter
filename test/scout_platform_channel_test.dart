@@ -78,7 +78,7 @@ void main() {
 
     test('setAnrHandler receives onAnrDetected calls', () async {
       final detections = <int>[];
-      ScoutPlatformChannel.setAnrHandler((durationMs) {
+      ScoutPlatformChannel.setAnrHandler((durationMs, dump) {
         detections.add(durationMs);
       });
 
@@ -92,9 +92,33 @@ void main() {
       expect(detections, [5500]);
     });
 
+    test('setAnrHandler receives thread dump payload', () async {
+      int? duration;
+      Map<String, dynamic>? received;
+      ScoutPlatformChannel.setAnrHandler((durationMs, dump) {
+        duration = durationMs;
+        received = dump;
+      });
+
+      final ByteData message = const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('onAnrDetected', {
+          'duration': 6000,
+          'main_thread_stack': 'main.dart:1',
+          'threads_json': '[]',
+          'thread_count': 7,
+        }),
+      );
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage('com.base14.scout_flutter', message, (_) {});
+
+      expect(duration, 6000);
+      expect(received?['main_thread_stack'], 'main.dart:1');
+      expect(received?['thread_count'], 7);
+    });
+
     test('setAnrHandler ignores unknown methods', () async {
       final detections = <int>[];
-      ScoutPlatformChannel.setAnrHandler((durationMs) {
+      ScoutPlatformChannel.setAnrHandler((durationMs, dump) {
         detections.add(durationMs);
       });
 

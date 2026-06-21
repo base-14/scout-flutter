@@ -27,15 +27,15 @@ import java.io.InputStreamReader
 object ExitInfoCollector {
 
     /** Drain all historical exit reasons. Empty list on API < 30. */
-    fun collect(context: Context): List<Map<String, Any>> {
+    fun collect(context: Context, maxTombstoneBytes: Int = 32_000): List<Map<String, Any>> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return emptyList()
         }
-        return collectInternal(context)
+        return collectInternal(context, maxTombstoneBytes)
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
-    private fun collectInternal(context: Context): List<Map<String, Any>> {
+    private fun collectInternal(context: Context, maxTombstoneBytes: Int): List<Map<String, Any>> {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             ?: return emptyList()
 
@@ -52,7 +52,7 @@ object ExitInfoCollector {
         val out = mutableListOf<Map<String, Any>>()
         for (info in infos) {
             try {
-                out.add(parse(info))
+                out.add(parse(info, maxTombstoneBytes))
             } catch (_: Throwable) {
                 // Skip a single malformed record rather than losing them all.
             }
@@ -61,7 +61,7 @@ object ExitInfoCollector {
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
-    private fun parse(info: ApplicationExitInfo): Map<String, Any> {
+    private fun parse(info: ApplicationExitInfo, maxTombstoneBytes: Int): Map<String, Any> {
         val map = mutableMapOf<String, Any>()
         map["crash_type"] = reasonName(info.reason)
         map["crash_reason"] = info.description ?: reasonName(info.reason)
@@ -91,21 +91,21 @@ object ExitInfoCollector {
             info.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
             info.reason == ApplicationExitInfo.REASON_CRASH
         ) {
-            map["crash_tombstone"] = readTombstone(info)
+            map["crash_tombstone"] = readTombstone(info, maxTombstoneBytes)
         }
 
         return map
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
-    private fun readTombstone(info: ApplicationExitInfo): String {
+    private fun readTombstone(info: ApplicationExitInfo, maxTombstoneBytes: Int): String {
         return try {
             info.traceInputStream?.use { stream ->
                 BufferedReader(InputStreamReader(stream)).use { reader ->
                     val sb = StringBuilder()
                     var line: String?
                     var total = 0
-                    val cap = 32_000 // OTLP payload-friendly cap
+                    val cap = maxTombstoneBytes
                     while (reader.readLine().also { line = it } != null) {
                         val ln = line!!
                         if (total + ln.length > cap) {

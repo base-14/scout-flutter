@@ -71,6 +71,8 @@ class ScoutFlutter {
   static Stopwatch? _coldStartStopwatch;
   static bool _coldStartRecorded = false;
   static String _connectivityType = 'unknown';
+  static String _deviceOrientation = 'unknown';
+  static WidgetsBindingObserver? _orientationObserver;
   static dynamic _meter;
   static SessionManager? _sessionManager;
   static scout_log.ScoutLogger? _logger;
@@ -381,6 +383,8 @@ class ScoutFlutter {
       _setupLifecycleTracking();
     }
 
+    _setupOrientationTracking();
+
     if (config.enableLongTaskDetection) {
       _setupLongTaskDetection(config);
     }
@@ -500,7 +504,7 @@ class ScoutFlutter {
     } catch (_) {}
 
     // Drain every native-side crash pipeline. Three orthogonal sources:
-    //   1. KSCrash (iOS) / JVM uncaught + JNI signal handler (Android) —
+    //   1. The iOS crash reporter / JVM uncaught + JNI signal handler (Android) —
     //      written at the moment of crash to disk in-process.
     //   2. MetricKit (iOS 14+) — delayed payloads the OS attributes
     //      asynchronously, including crashes/hangs we missed because
@@ -669,6 +673,43 @@ class ScoutFlutter {
     } catch (_) {}
   }
 
+  static void _setupOrientationTracking() {
+    try {
+      _updateOrientation();
+      final observer = _ScoutOrientationObserver();
+      _orientationObserver = observer;
+      WidgetsBinding.instance.addObserver(observer);
+    } catch (_) {}
+  }
+
+  static void _updateOrientation() {
+    try {
+      final views = WidgetsBinding.instance.platformDispatcher.views;
+      if (views.isEmpty) return;
+      final size = views.first.physicalSize;
+      if (size.width <= 0 || size.height <= 0) return;
+      _deviceOrientation = size.width >= size.height ? 'landscape' : 'portrait';
+    } catch (_) {}
+  }
+
+  static Map<String, Object> _anrThreadAttributes(Map<String, dynamic>? dump) {
+    if (dump == null) return const {};
+    final out = <String, Object>{};
+    final mainStack = dump['main_thread_stack'];
+    if (mainStack is String && mainStack.isNotEmpty) {
+      out['anr.main_thread_stack'] = mainStack;
+    }
+    final threadsJson = dump['threads_json'];
+    if (threadsJson is String && threadsJson.isNotEmpty) {
+      out['anr.threads_json'] = threadsJson;
+    }
+    final threadCount = dump['thread_count'];
+    if (threadCount is int) {
+      out['anr.thread_count'] = threadCount;
+    }
+    return out;
+  }
+
   static void _setupLifecycleTracking() {
     _lifecycleListener = AppLifecycleListener(
       onPause: () {
@@ -762,7 +803,7 @@ class ScoutFlutter {
   }
 
   static Future<void> _setupAnrDetection(ScoutFlutterConfig config) async {
-    ScoutPlatformChannel.setAnrHandler((durationMs) {
+    ScoutPlatformChannel.setAnrHandler((durationMs, dump) {
       try {
         String? currentScreen;
         if (_currentScreenName != null) {
@@ -772,6 +813,8 @@ class ScoutFlutter {
           'anr.duration': durationMs / 1000.0,
           'anr.threshold': config.anrThresholdMs / 1000.0,
           if (currentScreen != null) 'screen.name': currentScreen,
+          'breadcrumbs': _safeBreadcrumbsJson(),
+          ..._anrThreadAttributes(dump),
           ..._commonAttributes(),
         });
         addBreadcrumb('anr', 'App not responding: ${durationMs}ms');
@@ -943,6 +986,11 @@ class ScoutFlutter {
     } catch (_) {
       // Battery info unavailable (e.g. desktop)
     }
+
+    try {
+      final rate = await ScoutPlatformChannel.getBatteryDischargeRate();
+      if (rate != null) attrs['device.battery.discharge_rate'] = rate;
+    } catch (_) {}
 
     try {
       final deviceInfo = DeviceInfoPlugin();
@@ -1159,10 +1207,6 @@ class ScoutFlutter {
     final stack = stackTrace?.toString() ?? '';
     final buildId = _dartBuildIdRegex.firstMatch(stack)?.group(1);
 
-    // Fingerprint: short stable hash of (error type + first stack frame
-    // + message). Mirrors `error.fingerprint` in DD / scout_react —
-    // lets the backend group recurrences of the same error without
-    // requiring identical full stack traces.
     final firstFrame = stack
         .split('\n')
         .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '');
@@ -1216,7 +1260,7 @@ class ScoutFlutter {
     return out;
   }
 
-  /// Pull every kind of native crash signal we can — KSCrash on iOS,
+  /// Pull every kind of native crash signal we can — the native crash reporter on iOS,
   /// in-process JVM + JNI on Android, MetricKit, ApplicationExitInfo —
   /// and emit each as a `native_crash` span with the full attribute set.
   static Future<void> _drainCrashReports() async {
@@ -1224,7 +1268,9 @@ class ScoutFlutter {
     final sources = <Future<List<Map<String, dynamic>>>>[
       ScoutPlatformChannel.getNativeCrashReports(),
       ScoutPlatformChannel.getMetricKitReports(),
-      ScoutPlatformChannel.getExitInfoReports(),
+      ScoutPlatformChannel.getExitInfoReports(
+        maxTombstoneBytes: _config?.maxTombstoneBytes ?? 131072,
+      ),
     ];
     final results = await Future.wait(
       sources.map((f) => f.catchError((_) => <Map<String, dynamic>>[])),
@@ -1290,7 +1336,7 @@ class ScoutFlutter {
       }
     }
 
-    // Per-report breadcrumbs (iOS): KSCrash.userInfo['breadcrumbs'] is baked
+    // Per-report breadcrumbs (iOS): the crash reporter's user-info breadcrumbs are baked
     // into each crash report at crash time, so it always matches the crashed
     // session even when delayed reports surface multiple launches later.
     String? perReport;
@@ -1401,13 +1447,12 @@ class ScoutFlutter {
       if (_anonymousId != null) 'user.anonymous_id': _anonymousId!,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
+      if (_deviceOrientation != 'unknown')
+        'device.orientation': _deviceOrientation,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
       if (_sessionManager != null)
         'session.start_time':
             _sessionManager!.sessionStartTime.toUtc().toIso8601String(),
-      // DD parity: distinguishes user sessions from synthetic / ci-test
-      // traffic. Today we only emit user-driven traffic, so this is
-      // always 'user'.
       'session.type': 'user',
       if (m != null) ...{
         'display.scroll.max_depth': m.maxDepth.round(),
@@ -1630,6 +1675,13 @@ class ScoutFlutter {
     _nativeVitalsCollector = null;
     _lifecycleListener?.dispose();
     _lifecycleListener = null;
+    if (_orientationObserver != null) {
+      try {
+        WidgetsBinding.instance.removeObserver(_orientationObserver!);
+      } catch (_) {}
+      _orientationObserver = null;
+    }
+    _deviceOrientation = 'unknown';
     _currentScreenName = null;
     _meter = null;
     _coldStartStopwatch = null;
@@ -1657,5 +1709,12 @@ class ScoutFlutter {
     _activeSpanId = null;
     _crashDetector = null;
     _debugLogger = const ScoutDebugLogger(enabled: false);
+  }
+}
+
+class _ScoutOrientationObserver with WidgetsBindingObserver {
+  @override
+  void didChangeMetrics() {
+    ScoutFlutter._updateOrientation();
   }
 }

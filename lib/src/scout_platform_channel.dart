@@ -84,6 +84,14 @@ class ScoutPlatformChannel {
     }
   }
 
+  static Future<int?> getBatteryDischargeRate() async {
+    try {
+      return await _channel.invokeMethod<int>('getBatteryDischargeRate');
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<String> getCpuArch() async {
     try {
       final result = await _channel.invokeMethod<String>('getCpuArch');
@@ -143,9 +151,14 @@ class ScoutPlatformChannel {
   /// Captures ANRs, OOM kills, native crashes, JVM crashes the OS knew
   /// about even when the in-process handlers couldn't write to disk.
   /// Returns an empty list on iOS and on Android API < 30.
-  static Future<List<Map<String, dynamic>>> getExitInfoReports() async {
+  static Future<List<Map<String, dynamic>>> getExitInfoReports({
+    int maxTombstoneBytes = 131072,
+  }) async {
     try {
-      final result = await _channel.invokeListMethod<Map>('getExitInfoReports');
+      final result = await _channel.invokeListMethod<Map>(
+        'getExitInfoReports',
+        {'maxTombstoneBytes': maxTombstoneBytes},
+      );
       if (result == null) return [];
       return result.map((r) => Map<String, dynamic>.from(r)).toList();
     } catch (_) {
@@ -155,16 +168,26 @@ class ScoutPlatformChannel {
   }
 
   /// Set up handler for ANR events from native side.
-  static void setAnrHandler(void Function(int durationMs) onAnr) {
+  static void setAnrHandler(
+    void Function(int durationMs, Map<String, dynamic>? dump) onAnr,
+  ) {
     _ensureRouter();
     _listeners['onAnrDetected'] = (args) {
-      if (args is int) onAnr(args);
+      if (args is int) {
+        onAnr(args, null);
+      } else if (args is Map) {
+        final duration = args['duration'];
+        if (duration is int) {
+          onAnr(duration, Map<String, dynamic>.from(args));
+        }
+      }
     };
   }
 
   /// Push the latest breadcrumb buffer to the native side so each native
   /// crash report carries the breadcrumbs current at crash time. On iOS
-  /// this lands in `KSCrash.userInfo` and rides into the crash report.
+  /// this lands in the native crash reporter's user info and rides into
+  /// the crash report.
   /// On Android the call is a no-op — the on-disk file (kept across
   /// launches by [CrashDetector]) is the authoritative source there.
   static Future<void> setBreadcrumbs(String json) async {
