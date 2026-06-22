@@ -6,7 +6,6 @@
 Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, one `initialize()` call — and the SDK captures spans, metrics, and logs for taps, navigation, errors, lifecycle, crashes, performance, and network out of the box.
 
 - **Package** — https://pub.dev/packages/scout_flutter
-- **Integration guide** — [doc/scout-flutter-guide.md](doc/scout-flutter-guide.md)
 - **Publisher** — [base14.io](https://pub.dev/publishers/base14.io)
 
 ## What's Captured
@@ -18,10 +17,10 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 | Taps | `user_interaction` | Buttons, GestureDetectors, InkWells, Switches, Tabs |
 | Lifecycle | `app_paused`, `app_resumed` | Background/foreground transitions |
 | Errors | `error.count` metric | FlutterError + uncaught async exceptions |
-| Device info | Resource attributes | Model, manufacturer, battery level, connectivity |
+| Device info | Resource attributes | Model, manufacturer, battery level, battery discharge rate, orientation, connectivity |
 | App startup | `app_startup` | Cold start and warm start duration |
 | Long tasks | `long_task` | Main isolate jank detection (configurable threshold) |
-| ANR | `anr` | Native watchdog thread detects unresponsive main thread |
+| ANR | `anr` | Native watchdog detects unresponsive main thread; captures full thread dump and breadcrumbs |
 | Frame metrics | `flutter.frame.build_time`, `flutter.frame.raster_time` | Per-frame build and raster histograms |
 | Frozen frames | `frozen_frame` | Frames exceeding 700ms |
 | Memory | `flutter.memory.usage` | Periodic native memory gauge |
@@ -95,10 +94,11 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 - `ScoutFlutter.addBreadcrumb(type, message)` — error context
 - `ScoutFlutter.reportError(error, stackTrace)` — manual error reporting
 - `ScoutFlutter.setUser(id: ..., attributes: ...)` / `clearUser()` — user identity
+- `ScoutFlutter.setSessionAttributes({...})` / `clearSessionAttributes()` — session-scoped attributes
 - `RumUserActionAnnotation` — custom tap labels for non-standard widgets
+- `headers` config — OTLP auth headers sent with every export (e.g. `Authorization: Bearer …`)
 - `beforeSend` config — filter or modify events before export
-
-See the [integration guide](doc/scout-flutter-guide.md) for full configuration reference and usage examples.
+- `maxTombstoneBytes` config — cap on Android exit-info tombstone bytes captured for ANR/native post-mortems
 
 ## Architecture
 
