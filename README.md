@@ -56,7 +56,7 @@ Three categories of crashes:
 
 - **Session marker** (`app_crash`) — OOM kills, `exit()` calls, and SIGKILL via persistent marker file. Reported on the next launch with the crashed session's breadcrumbs.
 - **JVM / NSException** (`native_crash`) — uncaught Java/Kotlin exceptions on Android, NSExceptions on iOS. Written to disk before the process dies.
-- **Native signals** (`native_crash`) — SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP on Android via a C signal handler. Captures stack trace via frame-pointer walk, register dump, signal code, pid/tid/uid, memory map, ABI, build fingerprint, kernel version, process uptime.
+- **Native signals** (`native_crash`) — SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP. On Android, an in-process C signal handler captures stack trace via frame-pointer walk, register dump, signal code, pid/tid/uid, memory map, ABI, build fingerprint, kernel version, process uptime. On iOS, the native crash reporter captures POSIX signals, Mach exceptions, C++ exceptions, and main-thread deadlock, with MetricKit supplying OS-delivered crash/hang diagnostics.
 
 Breadcrumbs are persisted to disk on every record, so they survive crashes and ship with both `app_crash` and `native_crash` spans.
 
@@ -114,9 +114,9 @@ Data flows through a `beforeSend` filter, then to the OTLP collector. Failed exp
 | Platform | Taps | Lifecycle | Errors | Navigation | Crashes | ANR | Native Vitals |
 |----------|------|-----------|--------|------------|---------|-----|---------------|
 | Android  | Yes  | Yes       | Yes    | Yes        | Yes     | Yes | Yes           |
-| iOS      | Yes  | Yes       | Yes    | Yes        | Partial | Yes | Yes           |
+| iOS      | Yes  | Yes       | Yes    | Yes        | Yes     | Yes | Yes           |
 
-iOS crash detection covers session marker crashes and NSExceptions. Native signal handling (SIGSEGV etc.) is Android-only currently.
+Both platforms capture native crashes in-process. iOS covers POSIX signals (SIGSEGV/SIGABRT/…), Mach exceptions, C++ exceptions, NSException, and main-thread deadlock, complemented by MetricKit for OS-delivered crash and hang diagnostics. Android pairs an in-process C signal handler with `ApplicationExitInfo` post-mortems.
 
 ## License
 

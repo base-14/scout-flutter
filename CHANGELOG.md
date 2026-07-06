@@ -1,3 +1,8 @@
+## 0.1.21
+
+### Changed
+- Upgraded `battery_plus` (^6 → ^7), `connectivity_plus` (^6 → ^7), and `device_info_plus` (^11 → ^12) to their latest majors. No API or behaviour change in Scout — the captured resource attributes (`device.battery.*`, `device.model.*`, `device.manufacturer`, `network.connection.type`, etc.) are identical, and `device_info_plus` 12's only removal (`AndroidDeviceInfo.serialNumber`) is unused. **Consuming apps must build with Android Gradle Plugin ≥ 8.12.1, Gradle ≥ 8.13, and Kotlin 2.2.0** — the minimum Android toolchain these plugin majors require. No change to Scout's minimum Flutter (3.29) / Dart (3.7) or Android `minSdk` (21).
+
 ## 0.1.20
 
 ### Features
