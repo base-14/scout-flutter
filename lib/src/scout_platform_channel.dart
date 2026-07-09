@@ -205,4 +205,51 @@ class ScoutPlatformChannel {
       if (args is int) onHang(args);
     };
   }
+
+  static Future<bool> initNativeDelegate(Map<String, dynamic> args) async {
+    try {
+      final r = await _channel.invokeMethod<bool>('initNativeDelegate', args);
+      return r ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<String?> readOwner() async {
+    try {
+      return await _channel.invokeMethod<String>('readOwner');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> setScreen(String name) async {
+    try {
+      await _channel.invokeMethod('setScreen', {'name': name});
+    } catch (_) {}
+  }
+
+  static Future<void> ingestSpans(String json) async {
+    try {
+      await _channel.invokeMethod('ingestSpans', {'json': json});
+    } catch (_) {}
+  }
+
+  static Future<void> ingestLogs(String json) async {
+    try {
+      await _channel.invokeMethod('ingestLogs', {'json': json});
+    } catch (_) {}
+  }
+
+  static Future<void> ingestMetrics(String json) async {
+    try {
+      await _channel.invokeMethod('ingestMetrics', {'json': json});
+    } catch (_) {}
+  }
+
+  static Future<void> pushForwardedBreadcrumbs(String json) async {
+    try {
+      await _channel.invokeMethod('pushBreadcrumbs', {'json': json});
+    } catch (_) {}
+  }
 }

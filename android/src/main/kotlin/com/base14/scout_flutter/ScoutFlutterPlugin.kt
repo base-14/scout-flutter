@@ -3,6 +3,10 @@ package com.base14.scout_flutter
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import io.base14.scout.android.Scout
+import io.base14.scout.android.ScoutBridge
+import io.base14.scout.core.ScoutConfig
+import io.base14.scout.core.ScoutRole
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -17,8 +21,6 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
         channel = MethodChannel(binding.binaryMessenger, "com.base14.scout_flutter")
         channel.setMethodCallHandler(this)
         context = binding.applicationContext
-
-        // Install crash handlers as early as possible.
         CrashReporter.install(binding.applicationContext)
     }
 
@@ -87,6 +89,57 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     result.success(ExitInfoCollector.collect(ctx, maxBytes))
                 }
             }
+            "initNativeDelegate" -> {
+                val ctx = context
+                if (ctx == null) {
+                    result.success(false)
+                    return
+                }
+                val ok = runCatching {
+                    Scout.initialize(
+                        ctx,
+                        ScoutConfig(
+                            serviceName = call.argument<String>("serviceName") ?: "",
+                            endpoint = call.argument<String>("endpoint") ?: "",
+                            environment = call.argument<String>("environment"),
+                            headers = call.argument<Map<String, String>>("headers") ?: emptyMap(),
+                            sessionSampleRate = (call.argument<Number>("sessionSampleRate"))?.toDouble() ?: 1.0,
+                            role = ScoutRole.AUTO,
+                            enableScreenTracking = false,
+                            enableTapTracking = false,
+                            enableStartupTracking = false,
+                        ),
+                    )
+                }.isSuccess
+                result.success(ok)
+            }
+            "ingestSpans" -> {
+                ScoutBridge.ingestSpans(call.argument<String>("json") ?: "")
+                result.success(null)
+            }
+            "ingestLogs" -> {
+                ScoutBridge.ingestLogs(call.argument<String>("json") ?: "")
+                result.success(null)
+            }
+            "ingestMetrics" -> {
+                ScoutBridge.ingestMetrics(call.argument<String>("json") ?: "")
+                result.success(null)
+            }
+            "pushBreadcrumbs" -> {
+                ScoutBridge.pushBreadcrumbs(call.argument<String>("json") ?: "")
+                result.success(null)
+            }
+            "setBreadcrumbs" -> {
+                ScoutBridge.setBreadcrumbs(call.argument<String>("json") ?: "")
+                result.success(null)
+            }
+            "readOwner" -> {
+                result.success(ScoutBridge.readOwner())
+            }
+            "setScreen" -> {
+                io.base14.scout.android.Scout.setScreen(call.argument<String>("name") ?: "")
+                result.success(null)
+            }
             "getTimezone" -> {
                 result.success(java.util.TimeZone.getDefault().id)
             }
@@ -102,13 +155,6 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "getBatteryDischargeRate" -> {
                 result.success(batteryDischargeRate())
             }
-            "setBreadcrumbs" -> {
-                // Android crash capture is file-based (CrashDetector persists
-                // breadcrumbs.json across launches); the native side does not
-                // need to receive the payload. Acknowledge so Dart doesn't
-                // see MissingPluginException.
-                result.success(null)
-            }
             else -> result.notImplemented()
         }
     }
@@ -119,7 +165,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             val bm = ctx.getSystemService(Context.BATTERY_SERVICE)
                 as? android.os.BatteryManager ?: return null
             val current = bm.getLongProperty(
-                android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW
+                android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW,
             )
             if (current == Long.MIN_VALUE || current == 0L) null else current
         } catch (_: Throwable) {
@@ -136,7 +182,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 "/data/local/bin/su", "/data/local/xbin/su",
                 "/system/sd/xbin/su", "/system/bin/failsafe/su",
                 "/su/bin/su", "/sbin/.magisk", "/cache/.disable_magisk",
-                "/dev/.magisk.unblock"
+                "/dev/.magisk.unblock",
             )
             for (path in rootPaths) {
                 if (java.io.File(path).exists()) return true
@@ -159,7 +205,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     "com.thirdparty.superuser",
                     "eu.chainfire.supersu",
                     "com.noshufou.android.su",
-                    "com.topjohnwu.magisk"
+                    "com.topjohnwu.magisk",
                 )
                 for (pkg in rootPackages) {
                     try {

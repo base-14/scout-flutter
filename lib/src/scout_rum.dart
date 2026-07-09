@@ -39,6 +39,8 @@ import 'crash_detector.dart';
 import 'global_tap_detector.dart';
 import 'scroll_observer.dart';
 import 'uuid.dart';
+import 'bridge_span_exporter.dart';
+import 'bridge_metric_exporter.dart';
 
 /// Main entry point for Scout Flutter RUM.
 ///
@@ -75,10 +77,11 @@ class ScoutFlutter {
   static NativeVitalsCollector? _nativeVitalsCollector;
   static Stopwatch? _coldStartStopwatch;
   static bool _coldStartRecorded = false;
+  static bool _delegating = false;
+  static dynamic _meter;
   static String _connectivityType = 'unknown';
   static String _deviceOrientation = 'unknown';
   static WidgetsBindingObserver? _orientationObserver;
-  static dynamic _meter;
   static SessionManager? _sessionManager;
   // Fail-closed default so nothing can leak before initialize() wires
   // the real gate; error-class telemetry still bypasses it.
@@ -181,6 +184,7 @@ class ScoutFlutter {
       onScreenChanged: (screenName) {
         try {
           _currentScreenName = screenName;
+          if (_delegating) ScoutPlatformChannel.setScreen(screenName);
           final isFirst = !_hasNavigated;
           _hasNavigated = true;
           _emitSpan('screen_view', {
@@ -265,28 +269,27 @@ class ScoutFlutter {
     _coldStartStopwatch ??= Stopwatch()..start();
     _appStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
     WidgetsFlutterBinding.ensureInitialized();
+    if (config.enableErrorTracking) {
+      _setupErrorHandlers();
+    }
+    unawaited(_bootstrap(config));
+  }
 
-    // Install error handlers and crash detector FIRST — before any async
-    // work that could fail. This ensures Dart exceptions during
-    // initialization itself are captured and persisted to disk.
+  static Future<void> _bootstrap(ScoutFlutterConfig config) async {
     try {
       final tempDir = await getTemporaryDirectory();
       _crashDetector = CrashDetector(
         directory: Directory('${tempDir.path}/scout_crash'),
       );
-    } catch (_) {
-      // If we can't even create the crash detector, continue without it.
-    }
+    } catch (_) {}
     if (config.enableErrorTracking) {
       _setupErrorHandlers();
     }
-
-    // Wrap the rest of initialization — SDK failure must never crash the app.
     try {
-      await _initializeCore(config);
+      await _initializeCore(config).timeout(const Duration(seconds: 30));
     } catch (e) {
-      debugPrint('ScoutFlutter: initialization failed: $e');
-      _debugLogger.error('initialization failed: $e');
+      debugPrint('ScoutFlutter: initialization failed or timed out: $e');
+      _debugLogger.error('initialization failed or timed out: $e');
     }
   }
 
@@ -372,11 +375,21 @@ class ScoutFlutter {
       seconds: config.effectiveMetricExportIntervalSeconds + 35,
     );
 
+    _delegating = await ScoutPlatformChannel.initNativeDelegate({
+      'serviceName': config.serviceName,
+      'endpoint': httpEndpoint,
+      'headers': config.headers,
+      if (config.environment != null) 'environment': config.environment,
+      'sessionSampleRate': config.sessionSampleRate,
+    });
+
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
     // FixedHttpSpanExporter holds one keep-alive connection; the upstream
     // OtlpHttpSpanExporter opens a new connection per batch.
     final SpanExporter spanExporter =
-        config.debugLogging
+        _delegating
+            ? BridgeSpanExporter(kScopeName)
+            : config.debugLogging
             ? ScoutDebugSpanExporter(
               FixedHttpSpanExporter(
                 endpoint: httpEndpoint,
@@ -403,9 +416,11 @@ class ScoutFlutter {
     // The explicit reader overrides flutterrific's default 1-second
     // export interval — at 1s every metric stream re-exports each
     // second for the process lifetime, which is enormous fleet-wide.
-    final FixedHttpMetricExporter? metricExporter =
+    final MetricExporter? metricExporter =
         config.enablePerformanceMetrics
-            ? FixedHttpMetricExporter(
+            ? (_delegating
+                ? BridgeMetricExporter(kScopeName)
+                : FixedHttpMetricExporter(
               endpoint: httpEndpoint,
               headers: config.headers,
               maxRetries: config.maxRetries,
@@ -417,7 +432,7 @@ class ScoutFlutter {
                   config.enableFrameMetrics
                       ? const {}
                       : const {'flutter.frame.duration'},
-            )
+            ))
             : null;
     final MetricReader? metricReader =
         metricExporter == null
@@ -479,7 +494,7 @@ class ScoutFlutter {
       _setupLongTaskDetection(config);
     }
 
-    if (config.enableAnrDetection) {
+    if (config.enableAnrDetection && !_delegating) {
       _setupAnrDetection(config);
     }
 
@@ -528,7 +543,8 @@ class ScoutFlutter {
 
     // Crash detection — check previous session before writing new marker.
     try {
-      final previousCrash = await _crashDetector?.checkPreviousCrash();
+      final previousCrash =
+          _delegating ? null : await _crashDetector?.checkPreviousCrash();
       if (previousCrash != null) {
         _previousSessionBreadcrumbs = previousCrash.breadcrumbs;
         // Extract error details from breadcrumbs for a self-contained crash span.
@@ -593,7 +609,7 @@ class ScoutFlutter {
     //      the kernel knew about: ANR, OOM kill, native crash, etc.
     // All three feed the same `native_crash` span shape so the
     // backend doesn't need to branch on source.
-    await _drainCrashReports();
+    if (!_delegating) await _drainCrashReports();
     _previousSessionBreadcrumbs = null;
 
     // Periodic offline flush (every 60 seconds)
@@ -1002,13 +1018,9 @@ class ScoutFlutter {
       },
       onFrozenFrame: (duration) {
         try {
-          String? currentScreen;
-          if (_currentScreenName != null) {
-            currentScreen = _currentScreenName;
-          }
           _emitSpan('frozen_frame', {
             'frozen_frame.duration': duration.inMilliseconds / 1000.0,
-            if (currentScreen != null) 'screen.name': currentScreen,
+            if (_currentScreenName != null) 'screen.name': _currentScreenName!,
             ..._commonAttributes(),
           });
           addBreadcrumb(
@@ -1280,7 +1292,7 @@ class ScoutFlutter {
   /// before the app's handler. Skips if already wrapped.
   static void _wrapPlatformErrorHandler() {
     final current = PlatformDispatcher.instance.onError;
-    if (current == _wrappedPlatformErrorHandler) return;
+    if (current != null && current == _wrappedPlatformErrorHandler) return;
 
     final appHandler = current;
     _wrappedPlatformErrorHandler = (Object error, StackTrace stack) {
@@ -1756,9 +1768,10 @@ class ScoutFlutter {
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     try {
-      if (!_sampleGate.shouldSampleLog(
-        isError: entry.level == scout_log.LogLevel.error,
-      )) {
+      if (!_delegating &&
+          !_sampleGate.shouldSampleLog(
+            isError: entry.level == scout_log.LogLevel.error,
+          )) {
         return;
       }
 
@@ -1801,6 +1814,27 @@ class ScoutFlutter {
         traceId: _activeTraceId,
         spanId: _activeSpanId,
       );
+      if (_delegating) {
+        ScoutPlatformChannel.ingestLogs(
+          jsonEncode({
+            'logs': [
+              {
+                'scope': kScopeName,
+                'severity_number': logRecord.severityNumber,
+                'severity_text': logRecord.severityText,
+                'body': logRecord.body,
+                'timestamp_unix_nano': logRecord.timestampNanos.toString(),
+                'attributes':
+                    logRecord.attributes?.map(
+                      (k, v) => MapEntry(k, v.toString()),
+                    ) ??
+                    <String, String>{},
+              },
+            ],
+          }),
+        );
+        return;
+      }
       _logBatcher?.add(logRecord);
     } catch (_) {}
   }
@@ -1872,7 +1906,6 @@ class ScoutFlutter {
     }
     _deviceOrientation = 'unknown';
     _currentScreenName = null;
-    _meter = null;
     _coldStartStopwatch = null;
     _coldStartRecorded = false;
     _connectivityType = 'unknown';
