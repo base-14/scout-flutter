@@ -162,6 +162,64 @@ void main() {
       expect(memoryData, isEmpty);
     });
 
+    test('skips memory platform calls when onMemory is null', () async {
+      var memoryCalls = 0;
+      final cpuData = <double>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            if (call.method == 'getMemoryUsage') {
+              memoryCalls++;
+              return {'used': 50000000, 'max': 200000000};
+            }
+            if (call.method == 'getCpuUsage') {
+              return {'cpu_percent': 25.5};
+            }
+            return null;
+          });
+
+      final collector = NativeVitalsCollector(
+        interval: const Duration(milliseconds: 50),
+        onMemory: null,
+        onCpu: (percent) => cpuData.add(percent),
+      );
+
+      collector.start();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      collector.stop();
+
+      expect(memoryCalls, 0);
+      expect(cpuData, isNotEmpty);
+    });
+
+    test('skips CPU platform calls when onCpu is null', () async {
+      var cpuCalls = 0;
+      final memoryData = <List<int>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            if (call.method == 'getMemoryUsage') {
+              return {'used': 50000000, 'max': 200000000};
+            }
+            if (call.method == 'getCpuUsage') {
+              cpuCalls++;
+              return {'cpu_percent': 25.5};
+            }
+            return null;
+          });
+
+      final collector = NativeVitalsCollector(
+        interval: const Duration(milliseconds: 50),
+        onMemory: (used, max) => memoryData.add([used, max]),
+        onCpu: null,
+      );
+
+      collector.start();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      collector.stop();
+
+      expect(cpuCalls, 0);
+      expect(memoryData, isNotEmpty);
+    });
+
     test('default interval is 500ms', () {
       final collector = NativeVitalsCollector(
         onMemory: (_, __) {},

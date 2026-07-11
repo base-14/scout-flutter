@@ -95,13 +95,18 @@ void main() {
       },
     );
 
-    test('falls back to sampled when session is null', () {
+    test('fails closed (drops) when session is null', () {
       final sampler = ScoutSessionSampler(
         sessionResolver: () => null,
         alwaysCaptureErrors: true,
       );
       expect(
         _shouldSample(sampler, 'user_interaction').decision,
+        SamplingDecision.drop,
+      );
+      // Errors still bypass even without a session.
+      expect(
+        _shouldSample(sampler, 'error').decision,
         SamplingDecision.recordAndSample,
       );
     });

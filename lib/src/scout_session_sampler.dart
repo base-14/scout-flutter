@@ -43,8 +43,11 @@ class ScoutSessionSampler implements Sampler {
       );
     }
 
+    // Fail closed: no session yet means "drop", never "leak". The
+    // SessionManager is constructed before the tracer, so this only
+    // guards pathological orderings.
     final session = _sessionResolver();
-    final sampled = session?.isSampled ?? true;
+    final sampled = session?.isSampled ?? false;
     _logger?.sample(name: name, decision: sampled ? 'recordAndSample' : 'drop');
     return SamplingResult(
       decision:

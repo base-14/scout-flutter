@@ -48,6 +48,28 @@ class ScoutFlutterConfig {
   /// Whether to collect performance metrics (FPS, memory, CPU, frame times).
   final bool enablePerformanceMetrics;
 
+  /// Whether to record per-frame build/raster histograms
+  /// (`flutter.frame.build_time`, `flutter.frame.raster_time`).
+  /// Off by default — these record on every rendered frame with one
+  /// stream per screen visited, making them by far the highest-volume
+  /// metrics the SDK can produce. Frozen-frame detection stays active
+  /// regardless of this flag.
+  final bool enableFrameMetrics;
+
+  /// Whether to record the periodic `flutter.memory.usage` gauge.
+  final bool enableMemoryMetrics;
+
+  /// Whether to record the periodic `flutter.cpu.usage` gauge.
+  final bool enableCpuMetrics;
+
+  /// Seconds between metric export batches (OTLP HTTP POSTs).
+  /// Values below 1 are clamped to 1. Default 60.
+  final int metricExportIntervalSeconds;
+
+  /// Seconds between native memory/CPU polls. Values below 1 are
+  /// clamped to 1. Default 60.
+  final int vitalsCollectionIntervalSeconds;
+
   /// Whether to detect Application Not Responding (ANR) events.
   final bool enableAnrDetection;
 
@@ -150,6 +172,11 @@ class ScoutFlutterConfig {
     this.secure = true,
     this.customGestureDetector,
     this.enablePerformanceMetrics = true,
+    this.enableFrameMetrics = false,
+    this.enableMemoryMetrics = true,
+    this.enableCpuMetrics = true,
+    int metricExportIntervalSeconds = 60,
+    int vitalsCollectionIntervalSeconds = 60,
     this.enableLongTaskDetection = true,
     int longTaskThresholdMs = 100,
     this.enableAnrDetection = true,
@@ -176,6 +203,12 @@ class ScoutFlutterConfig {
     this.beforeSend,
     this.debugLogging = false,
   }) : maxTombstoneBytes = maxTombstoneBytes < 4096 ? 4096 : maxTombstoneBytes,
+       metricExportIntervalSeconds =
+           metricExportIntervalSeconds < 1 ? 1 : metricExportIntervalSeconds,
+       vitalsCollectionIntervalSeconds =
+           vitalsCollectionIntervalSeconds < 1
+               ? 1
+               : vitalsCollectionIntervalSeconds,
        longTaskThresholdMs =
            longTaskThresholdMs < 20 ? 20 : longTaskThresholdMs,
        anrThresholdMs = anrThresholdMs < 1000 ? 1000 : anrThresholdMs,

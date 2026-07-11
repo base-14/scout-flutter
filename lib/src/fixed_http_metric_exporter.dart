@@ -29,6 +29,7 @@ class FixedHttpMetricExporter implements MetricExporter {
   final Duration _timeout;
   final int _maxRetries;
   final Duration _baseDelay;
+  final Set<String> _dropMetricNames;
   bool _isShutdown = false;
   final Random _random = Random();
 
@@ -38,6 +39,7 @@ class FixedHttpMetricExporter implements MetricExporter {
     Duration timeout = const Duration(seconds: 10),
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 200),
+    Set<String> dropMetricNames = const {},
   }) : _endpoint =
            endpoint.endsWith('/v1/metrics')
                ? endpoint
@@ -45,11 +47,25 @@ class FixedHttpMetricExporter implements MetricExporter {
        _headers = headers ?? {},
        _timeout = timeout,
        _maxRetries = maxRetries,
-       _baseDelay = baseDelay;
+       _baseDelay = baseDelay,
+       _dropMetricNames = {..._alwaysDroppedMetricNames, ...dropMetricNames};
+
+  /// Metrics emitted by the underlying flutterrific/dartastic layers that
+  /// Scout intentionally never ships. `flutter.lifecycle.state_change` is
+  /// redundant with the `app_paused`/`app_resumed` spans, and with
+  /// cumulative temporality its streams would be re-exported on every
+  /// batch for the life of the process. Additional names can be dropped
+  /// per-config via [FixedHttpMetricExporter.new]'s `dropMetricNames`
+  /// (e.g. the upstream `flutter.frame.duration` when frame metrics are
+  /// disabled).
+  static const Set<String> _alwaysDroppedMetricNames = {
+    'flutter.lifecycle.state_change',
+  };
 
   @override
   Future<bool> export(MetricData data) async {
     if (_isShutdown) return false;
+    data = data.filter((m) => !_dropMetricNames.contains(m.name));
     if (data.metrics.isEmpty) return true;
 
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {

@@ -27,6 +27,7 @@ import 'scope.dart';
 import 'scout_logger.dart' as scout_log;
 import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
+import 'scout_sample_gate.dart';
 import 'scout_session_sampler.dart';
 import 'session_manager.dart';
 import 'breadcrumb_manager.dart';
@@ -75,6 +76,12 @@ class ScoutFlutter {
   static WidgetsBindingObserver? _orientationObserver;
   static dynamic _meter;
   static SessionManager? _sessionManager;
+  // Fail-closed default so nothing can leak before initialize() wires
+  // the real gate; error-class telemetry still bypasses it.
+  static ScoutSampleGate _sampleGate = ScoutSampleGate(
+    sessionResolver: () => null,
+    alwaysCaptureErrors: true,
+  );
   static scout_log.ScoutLogger? _logger;
   static FixedHttpLogExporter? _logExporter;
   static OfflineQueue? _offlineQueue;
@@ -278,6 +285,32 @@ class ScoutFlutter {
     }
   }
 
+  /// Whether a `debugPrint` message may be captured as a log by
+  /// `capturePrintStatements`. The SDK's own `[scout]` diagnostics
+  /// (emitted by `debugLogging`) must never be re-ingested: every
+  /// captured log prints another `[scout] log [...]` line, which
+  /// would loop forever and flood the log exporter.
+  @visibleForTesting
+  static bool shouldCapturePrint(String message) =>
+      !message.startsWith('[scout]');
+
+  /// OTLP HTTP span exporter config. `maxRetries: 0` is deliberate:
+  /// the upstream exporter re-sends the whole batch on ambiguous
+  /// failures (timeouts, 429/503), and when the collector had in fact
+  /// ingested the first attempt the backend stores duplicate spans
+  /// with identical span IDs. RUM traffic prefers at-most-once.
+  @visibleForTesting
+  static OtlpHttpExporterConfig buildSpanExporterConfig({
+    required String endpoint,
+    Map<String, String>? headers,
+  }) {
+    return OtlpHttpExporterConfig(
+      endpoint: endpoint,
+      headers: headers,
+      maxRetries: 0,
+    );
+  }
+
   static Future<void> _initializeCore(ScoutFlutterConfig config) async {
     _debugLogger = ScoutDebugLogger(enabled: config.debugLogging);
     final tempDir = await getTemporaryDirectory();
@@ -301,6 +334,32 @@ class ScoutFlutter {
       _anonymousId ??= uuidV4();
     }
 
+    // Session manager FIRST — before the tracer, meter, and every
+    // detector. The sampling gates fail closed when no session exists,
+    // so anything wired before this point would drop its telemetry;
+    // creating the session up front means startup spans (long_task,
+    // app_startup, early frames) are subject to the same per-session
+    // sampling as everything else instead of leaking past it.
+    _sessionManager = SessionManager(
+      sampleRate: config.sessionSampleRate,
+      timeoutMinutes: config.sessionTimeoutMinutes,
+      maxDurationMinutes: config.maxSessionDurationMinutes,
+      onSessionChanged:
+          (sessionId, sampled) =>
+              _debugLogger.session(sessionId: sessionId, sampled: sampled),
+    );
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      await _sessionManager!.start(directory: docsDir);
+    } catch (_) {}
+
+    // Single sampling gate shared by every span/metric/log emit path.
+    _sampleGate = ScoutSampleGate(
+      sessionResolver: () => _sessionManager,
+      alwaysCaptureErrors: config.alwaysCaptureErrors,
+    );
+
     final resourceAttrs = <String, Object>{
       if (config.environment != null) 'environment': config.environment!,
       ...?config.resourceAttributes,
@@ -320,7 +379,7 @@ class ScoutFlutter {
         config.debugLogging
             ? ScoutDebugSpanExporter(
               OtlpHttpSpanExporter(
-                OtlpHttpExporterConfig(
+                buildSpanExporterConfig(
                   endpoint: httpEndpoint,
                   headers: config.headers,
                 ),
@@ -328,7 +387,7 @@ class ScoutFlutter {
               _debugLogger,
             )
             : OtlpHttpSpanExporter(
-              OtlpHttpExporterConfig(
+              buildSpanExporterConfig(
                 endpoint: httpEndpoint,
                 headers: config.headers,
               ),
@@ -337,6 +396,34 @@ class ScoutFlutter {
     final resolvedServiceVersion = await _resolveServiceVersion(
       config.serviceVersion,
     );
+
+    // Use our fixed exporter to work around the frozen protobuf bug
+    // in dartastic_opentelemetry's OtlpHttpMetricExporter.
+    // See: https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/1
+    // The explicit reader overrides flutterrific's default 1-second
+    // export interval — at 1s every metric stream re-exports each
+    // second for the process lifetime, which is enormous fleet-wide.
+    final FixedHttpMetricExporter? metricExporter =
+        config.enablePerformanceMetrics
+            ? FixedHttpMetricExporter(
+              endpoint: httpEndpoint,
+              headers: config.headers,
+              // flutter.frame.duration is recorded per frame by the
+              // upstream flutterrific layer; when Scout's frame metrics
+              // are disabled, drop the upstream one too.
+              dropMetricNames:
+                  config.enableFrameMetrics
+                      ? const {}
+                      : const {'flutter.frame.duration'},
+            )
+            : null;
+    final MetricReader? metricReader =
+        metricExporter == null
+            ? null
+            : PeriodicExportingMetricReader(
+              metricExporter,
+              interval: Duration(seconds: config.metricExportIntervalSeconds),
+            );
 
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
@@ -352,16 +439,8 @@ class ScoutFlutter {
         logger: config.debugLogging ? _debugLogger : null,
       ),
       spanProcessor: BatchSpanProcessor(spanExporter),
-      // Use our fixed exporter to work around the frozen protobuf bug
-      // in dartastic_opentelemetry's OtlpHttpMetricExporter.
-      // See: https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/1
-      metricExporter:
-          config.enablePerformanceMetrics
-              ? FixedHttpMetricExporter(
-                endpoint: httpEndpoint,
-                headers: config.headers,
-              )
-              : null,
+      metricExporter: metricExporter,
+      metricReader: metricReader,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
     );
@@ -395,8 +474,10 @@ class ScoutFlutter {
 
     if (config.enablePerformanceMetrics) {
       _meter = FlutterOTel.meter(name: kScopeName, version: kScopeVersion);
-      _setupFrameMetrics();
-      _setupNativeVitals();
+      _setupFrameMetrics(config);
+      if (config.enableMemoryMetrics || config.enableCpuMetrics) {
+        _setupNativeVitals(config);
+      }
     }
 
     if (config.enableStartupTracking) {
@@ -416,22 +497,10 @@ class ScoutFlutter {
       });
     }
 
-    // --- Phase 3: Session, Logging, Network, Offline ---
-
-    // Session manager
-    _sessionManager = SessionManager(
-      sampleRate: config.sessionSampleRate,
-      timeoutMinutes: config.sessionTimeoutMinutes,
-      maxDurationMinutes: config.maxSessionDurationMinutes,
-      onSessionChanged:
-          (sessionId, sampled) =>
-              _debugLogger.session(sessionId: sessionId, sampled: sampled),
-    );
-
-    try {
-      final docsDir = await getApplicationDocumentsDirectory();
-      await _sessionManager!.start(directory: docsDir);
-    } catch (_) {}
+    // --- Phase 3: Logging, Network, Offline ---
+    // (Session manager is created at the top of this method, before
+    // the tracer and detectors, so sampling applies from the first
+    // emitted event.)
 
     // Offline queue + crash detection
     final offlineDir = Directory('${tempDir.path}/scout_offline');
@@ -537,7 +606,7 @@ class ScoutFlutter {
         debugPrint = (String? message, {int? wrapWidth}) {
           _originalDebugPrint!(message, wrapWidth: wrapWidth);
           try {
-            if (message != null) {
+            if (message != null && shouldCapturePrint(message)) {
               _logger?.logInfo(message);
             }
           } catch (_) {}
@@ -588,10 +657,7 @@ class ScoutFlutter {
   /// Creates and immediately ends a span, subject to sampling and beforeSend.
   static void _emitSpan(String name, Map<String, Object> attributes) {
     if (!isInitialized) return;
-    final alwaysOn =
-        (_config?.alwaysCaptureErrors ?? true) &&
-        kErrorClassSpans.contains(name);
-    if (!alwaysOn && !(_sessionManager?.isSampled ?? true)) return;
+    if (!_sampleGate.shouldSampleSpan(name)) return;
 
     final filtered = _applyBeforeSend('span', name, attributes);
     if (filtered == null) return;
@@ -850,25 +916,37 @@ class ScoutFlutter {
     }
   }
 
-  static void _setupFrameMetrics() {
+  static void _setupFrameMetrics(ScoutFlutterConfig config) {
     final meter = _meter;
 
-    final buildHistogram = meter.createHistogram<double>(
-      name: 'flutter.frame.build_time',
-      description: 'Flutter widget build duration',
-      unit: 's',
-    );
+    // Frame histograms record on every rendered frame with one stream
+    // per screen — the highest-volume metrics the SDK can produce —
+    // so they are opt-in. Frozen-frame detection stays on regardless.
+    final recordFrameHistograms = config.enableFrameMetrics;
 
-    final rasterHistogram = meter.createHistogram<double>(
-      name: 'flutter.frame.raster_time',
-      description: 'Flutter GPU raster duration',
-      unit: 's',
-    );
+    final buildHistogram =
+        recordFrameHistograms
+            ? meter.createHistogram<double>(
+              name: 'flutter.frame.build_time',
+              description: 'Flutter widget build duration',
+              unit: 's',
+            )
+            : null;
+
+    final rasterHistogram =
+        recordFrameHistograms
+            ? meter.createHistogram<double>(
+              name: 'flutter.frame.raster_time',
+              description: 'Flutter GPU raster duration',
+              unit: 's',
+            )
+            : null;
 
     _frameMetricsCollector = FrameMetricsCollector(
       onFrameTiming: (buildTime, rasterTime) {
         try {
-          if (!(_sessionManager?.isSampled ?? true)) return;
+          if (buildHistogram == null || rasterHistogram == null) return;
+          if (!_sampleGate.shouldSampleMetric()) return;
           final screenAttr =
               <String, Object>{
                 if (_currentScreenName != null)
@@ -908,7 +986,7 @@ class ScoutFlutter {
     _frameMetricsCollector!.start();
   }
 
-  static void _setupNativeVitals() {
+  static void _setupNativeVitals(ScoutFlutterConfig config) {
     // Get the SDK Meter directly, bypassing UIMeter which has a broken
     // createGauge cast (UIMeter casts APIGauge as Gauge, which fails).
     final sdkMeter = FlutterOTel.meterProvider.delegate.getMeter(
@@ -916,45 +994,58 @@ class ScoutFlutter {
       version: kScopeVersion,
     );
 
-    final memoryGauge = sdkMeter.createGauge<double>(
-      name: 'flutter.memory.usage',
-      description: 'App memory usage',
-      unit: 'By',
-    );
+    final memoryGauge =
+        config.enableMemoryMetrics
+            ? sdkMeter.createGauge<double>(
+              name: 'flutter.memory.usage',
+              description: 'App memory usage',
+              unit: 'By',
+            )
+            : null;
 
-    final cpuGauge = sdkMeter.createGauge<double>(
-      name: 'flutter.cpu.usage',
-      description: 'App CPU usage percentage',
-      unit: '%',
-    );
+    final cpuGauge =
+        config.enableCpuMetrics
+            ? sdkMeter.createGauge<double>(
+              name: 'flutter.cpu.usage',
+              description: 'App CPU usage percentage',
+              unit: '%',
+            )
+            : null;
 
     _nativeVitalsCollector = NativeVitalsCollector(
-      onMemory: (usedBytes, maxBytes) {
-        try {
-          if (!(_sessionManager?.isSampled ?? true)) return;
-          final attrs =
-              <String, Object>{
-                if (_currentScreenName != null)
-                  'screen.name': _currentScreenName!,
-                if (_sessionManager != null)
-                  'session.id': _sessionManager!.sessionId,
-              }.toAttributes();
-          memoryGauge.record(usedBytes.toDouble(), attrs);
-        } catch (_) {}
-      },
-      onCpu: (cpuPercent) {
-        try {
-          if (!(_sessionManager?.isSampled ?? true)) return;
-          final attrs =
-              <String, Object>{
-                if (_currentScreenName != null)
-                  'screen.name': _currentScreenName!,
-                if (_sessionManager != null)
-                  'session.id': _sessionManager!.sessionId,
-              }.toAttributes();
-          cpuGauge.record(cpuPercent, attrs);
-        } catch (_) {}
-      },
+      interval: Duration(seconds: config.vitalsCollectionIntervalSeconds),
+      onMemory:
+          memoryGauge == null
+              ? null
+              : (usedBytes, maxBytes) {
+                try {
+                  if (!_sampleGate.shouldSampleMetric()) return;
+                  final attrs =
+                      <String, Object>{
+                        if (_currentScreenName != null)
+                          'screen.name': _currentScreenName!,
+                        if (_sessionManager != null)
+                          'session.id': _sessionManager!.sessionId,
+                      }.toAttributes();
+                  memoryGauge.record(usedBytes.toDouble(), attrs);
+                } catch (_) {}
+              },
+      onCpu:
+          cpuGauge == null
+              ? null
+              : (cpuPercent) {
+                try {
+                  if (!_sampleGate.shouldSampleMetric()) return;
+                  final attrs =
+                      <String, Object>{
+                        if (_currentScreenName != null)
+                          'screen.name': _currentScreenName!,
+                        if (_sessionManager != null)
+                          'session.id': _sessionManager!.sessionId,
+                      }.toAttributes();
+                  cpuGauge.record(cpuPercent, attrs);
+                } catch (_) {}
+              },
     );
     _nativeVitalsCollector!.start();
   }
@@ -1521,7 +1612,7 @@ class ScoutFlutter {
   static void _onHttpRequestCompleted(HttpRequestData data) {
     try {
       if (!isInitialized) return;
-      if (!(_sessionManager?.isSampled ?? true)) return;
+      if (!_sampleGate.shouldSampleSpan('http.request')) return;
 
       final attributes = _applyBeforeSend('span', 'http.request', {
         'http.request.method': data.method,
@@ -1551,10 +1642,11 @@ class ScoutFlutter {
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     try {
-      final alwaysOn =
-          (_config?.alwaysCaptureErrors ?? true) &&
-          entry.level == scout_log.LogLevel.error;
-      if (!alwaysOn && !(_sessionManager?.isSampled ?? true)) return;
+      if (!_sampleGate.shouldSampleLog(
+        isError: entry.level == scout_log.LogLevel.error,
+      )) {
+        return;
+      }
 
       _debugLogger.log(
         level: entry.level.severityText.toLowerCase(),
@@ -1688,6 +1780,10 @@ class ScoutFlutter {
     _coldStartRecorded = false;
     _connectivityType = 'unknown';
     _sessionManager = null;
+    _sampleGate = ScoutSampleGate(
+      sessionResolver: () => null,
+      alwaysCaptureErrors: true,
+    );
     _logger = null;
     _logExporter = null;
     _offlineQueue = null;

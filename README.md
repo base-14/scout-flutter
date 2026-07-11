@@ -21,10 +21,10 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 | App startup | `app_startup` | Cold start and warm start duration |
 | Long tasks | `long_task` | Main isolate jank detection (configurable threshold) |
 | ANR | `anr` | Native watchdog detects unresponsive main thread; captures full thread dump and breadcrumbs |
-| Frame metrics | `flutter.frame.build_time`, `flutter.frame.raster_time` | Per-frame build and raster histograms |
+| Frame metrics | `flutter.frame.build_time`, `flutter.frame.raster_time` | Per-frame build and raster histograms — opt-in via `enableFrameMetrics` (default off; records every frame, one stream per screen) |
 | Frozen frames | `frozen_frame` | Frames exceeding 700ms |
-| Memory | `flutter.memory.usage` | Periodic native memory gauge |
-| CPU | `flutter.cpu.usage` | Periodic CPU usage percentage gauge |
+| Memory | `flutter.memory.usage` | Periodic native memory gauge (`vitalsCollectionIntervalSeconds`, default 60s; disable via `enableMemoryMetrics`) |
+| CPU | `flutter.cpu.usage` | Periodic CPU usage percentage gauge (disable via `enableCpuMetrics`) |
 | Crash detection | `app_crash` | Detects OOM/SIGKILL/exit crashes via session marker |
 | Native crashes | `native_crash` | JVM exceptions, NDK signals (SIGSEGV, SIGABRT, etc.) with full stack trace, registers, memory map |
 
@@ -66,9 +66,15 @@ Every telemetry callback, error handler, and export path is wrapped in `try/catc
 
 ## Sampling
 
-By default Scout samples **1% of sessions** (`sessionSampleRate: 1.0`). When a session is sampled, every span in it is recorded; otherwise the whole session is dropped, so session traces stay coherent.
+By default Scout samples **1% of sessions** (`sessionSampleRate: 1.0`). The decision is made once per session and applies uniformly to **all three signals — spans, metrics, and logs**: a sampled session sends everything (coherent traces, matching metrics and logs); an unsampled session sends nothing.
 
-Error- and crash-class spans (`error`, `native_crash`, `app_crash`, `anr`, `ui_hang`) bypass the session sample rate by default. Set `alwaysCaptureErrors: false` to subject them to the same gate. Sampling is enforced at the OpenTelemetry layer, so it also applies to spans emitted by auto-instrumentation and direct `tracer.startSpan` calls.
+Error- and crash-class spans (`error`, `native_crash`, `app_crash`, `anr`, `ui_hang`) and error-level logs bypass the session sample rate by default. Set `alwaysCaptureErrors: false` to subject them to the same gate. Sampling is enforced both at the OpenTelemetry layer (so it also covers direct `tracer.startSpan` calls) and in a single fail-closed gate shared by every emit path — telemetry produced before the session exists is dropped, never leaked.
+
+## Export cadence
+
+- **Spans** — batched, exported every 5 s, single-attempt delivery (no retries, so a batch is never duplicated on the backend).
+- **Metrics** — exported every `metricExportIntervalSeconds` (default 60). Memory/CPU are polled every `vitalsCollectionIntervalSeconds` (default 60).
+- **Logs** — exported per entry; failed exports are queued offline and replayed.
 
 ## Debug Logging
 

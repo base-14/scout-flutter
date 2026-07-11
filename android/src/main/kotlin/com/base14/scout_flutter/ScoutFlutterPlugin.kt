@@ -33,7 +33,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "startAnrDetection" -> {
                 val thresholdMs = call.argument<Int>("thresholdMs")?.toLong() ?: 5000L
                 anrWatchdog?.stop()
-                anrWatchdog = AnrWatchdog(thresholdMs) { durationMs ->
+                anrWatchdog = AnrWatchdog(thresholdMs, onAnrDetected = { durationMs ->
                     val dump = ThreadDumpCollector.capture()
                     Handler(Looper.getMainLooper()).post {
                         val payload = HashMap<String, Any>()
@@ -41,7 +41,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                         payload.putAll(dump)
                         channel.invokeMethod("onAnrDetected", payload)
                     }
-                }
+                })
                 anrWatchdog?.start()
                 result.success(null)
             }
