@@ -60,6 +60,8 @@ Three categories of crashes:
 
 Breadcrumbs are persisted to disk on every record, so they survive crashes and ship with both `app_crash` and `native_crash` spans.
 
+Android `ApplicationExitInfo` post-mortems are filtered to crash-class reasons only (`anr`, `jvm_crash`, `native_crash`, `low_memory`) — normal exits like the user swiping the app away are never reported as crashes — and each record is reported exactly once via a persisted drain watermark. A JVM death produces two spans: `jvm_exception` (in-process, full stack trace) and `jvm_crash` (OS post-mortem, process facts, no stack — Android retains trace blobs only for ANR/native-crash exits).
+
 ## SDK Crash Safety
 
 Every telemetry callback, error handler, and export path is wrapped in `try/catch`. If any telemetry operation fails, it silently degrades — your app continues running normally.
@@ -105,6 +107,10 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 - `headers` config — OTLP auth headers sent with every export (e.g. `Authorization: Bearer …`)
 - `beforeSend` config — filter or modify events before export
 - `maxTombstoneBytes` config — cap on Android exit-info tombstone bytes captured for ANR/native post-mortems
+- `enableFrameMetrics` config — opt into per-frame build/raster histograms (default off; highest-volume metrics)
+- `enableMemoryMetrics` / `enableCpuMetrics` config — toggle the periodic vitals gauges individually
+- `metricExportIntervalSeconds` config — metric export batch interval (default 60)
+- `vitalsCollectionIntervalSeconds` config — memory/CPU poll interval (default 60)
 
 ## Architecture
 

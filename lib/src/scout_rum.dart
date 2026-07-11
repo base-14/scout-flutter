@@ -1351,6 +1351,69 @@ class ScoutFlutter {
     return out;
   }
 
+  /// ApplicationExitInfo reasons that represent an actual crash-class
+  /// death worth a `native_crash` span. Everything else in the exit
+  /// history is a normal way for a process to stop — `user_requested`
+  /// (swiped from recents / "Close app" on the ANR dialog),
+  /// `user_stopped` (Force Stop), `exit_self`, etc. — and must not be
+  /// reported as a crash.
+  @visibleForTesting
+  static bool isCrashClassExitInfo(String? crashType) => const {
+    'anr',
+    'jvm_crash',
+    'native_crash',
+    'low_memory',
+  }.contains(crashType);
+
+  /// ApplicationExitInfo history is not consumed on read — the OS keeps
+  /// up to 16 records for days — so each drain must only emit records
+  /// newer than the last drained death timestamp, or every launch
+  /// re-reports the same deaths.
+  @visibleForTesting
+  static List<Map<String, dynamic>> selectNewExitInfoRecords(
+    List<Map<String, dynamic>> records,
+    int? watermarkMs,
+  ) {
+    if (watermarkMs == null) return List.of(records);
+    return records
+        .where(
+          (r) => ((r['crash_death_timestamp_ms'] as int?) ?? 0) > watermarkMs,
+        )
+        .toList();
+  }
+
+  /// Highest death timestamp in [records]; 0 when none carry one.
+  @visibleForTesting
+  static int exitInfoWatermarkOf(List<Map<String, dynamic>> records) {
+    var max = 0;
+    for (final r in records) {
+      final ts = r['crash_death_timestamp_ms'] as int? ?? 0;
+      if (ts > max) max = ts;
+    }
+    return max;
+  }
+
+  static File? _exitInfoWatermarkFile;
+
+  static Future<int?> _readExitInfoWatermark() async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      _exitInfoWatermarkFile = File('${docsDir.path}/scout_exitinfo_watermark');
+      if (await _exitInfoWatermarkFile!.exists()) {
+        return int.tryParse(
+          (await _exitInfoWatermarkFile!.readAsString()).trim(),
+        );
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> _writeExitInfoWatermark(int watermarkMs) async {
+    try {
+      await _exitInfoWatermarkFile?.writeAsString('$watermarkMs');
+    } catch (_) {}
+  }
+
   /// Pull every kind of native crash signal we can — the native crash reporter on iOS,
   /// in-process JVM + JNI on Android, MetricKit, ApplicationExitInfo —
   /// and emit each as a `native_crash` span with the full attribute set.
@@ -1366,6 +1429,22 @@ class ScoutFlutter {
     final results = await Future.wait(
       sources.map((f) => f.catchError((_) => <Map<String, dynamic>>[])),
     );
+
+    // Exit-info (last source) needs both filters: benign exit reasons
+    // are not crashes, and already-drained records must not re-emit.
+    // The other sources consume their reports on read and use their own
+    // type names, so they pass through untouched.
+    final exitInfoAll = results.removeLast();
+    final watermark = await _readExitInfoWatermark();
+    final exitInfoNew =
+        selectNewExitInfoRecords(exitInfoAll, watermark)
+            .where((r) => isCrashClassExitInfo(r['crash_type'] as String?))
+            .toList();
+    final newWatermark = exitInfoWatermarkOf(exitInfoAll);
+    if (newWatermark > (watermark ?? 0)) {
+      await _writeExitInfoWatermark(newWatermark);
+    }
+    results.add(exitInfoNew);
     final totalReports = results.fold<int>(0, (sum, list) => sum + list.length);
     if (totalReports > 0 && _previousSessionBreadcrumbs == null) {
       _previousSessionBreadcrumbs =

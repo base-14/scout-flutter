@@ -67,13 +67,21 @@ Crashes
 | Native crashes (SIGSEGV, SIGABRT, etc.) | native_crash | Signal handler on Android, KSCrash on iOS. Captures full stack trace, registers, memory map. Reported on next app launch. |
 | JVM/NSException crashes | native_crash | Uncaught JVM exceptions (Android) and NSExceptions (iOS). Written to disk, reported on next launch. |
 | OOM / SIGKILL / exit() crashes | app_crash | Session marker file detects abnormal termination. Reported on next launch with breadcrumb trail. |
+| Android OS post-mortems | native_crash | ApplicationExitInfo records drained on launch. Only crash-class reasons are reported (anr, jvm_crash, native_crash, low_memory) — normal exits (user swiped the app away, Force Stop, exit()) are never counted as crashes. Each record is reported exactly once; a persisted watermark prevents re-reporting on later launches. |
 
 Crash spans include:
-- crash.type — mach, signal, nsexception, jvm, etc.
+- crash.type — mach, signal, nsexception, jvm_exception, jvm_crash, anr, etc.
 - crash.reason — EXC_BAD_ACCESS, SIGSEGV, NullPointerException, etc.
 - crash.stack_trace — Full stack trace from the crashed thread
 - crash.thread_name — Thread that crashed
 - Previous session's breadcrumbs — Last user actions before the crash
+
+Note on Android JVM crashes: one death produces two spans. The in-process
+handler emits crash.type=jvm_exception with the full stack trace; the OS
+post-mortem emits crash.type=jvm_crash with process-level facts (pss/rss,
+importance, exit status) but no stack — Android only retains trace blobs
+for ANR and native-crash exits. Look at the jvm_exception span for the
+stack.
 
 
 Errors
@@ -95,11 +103,13 @@ Performance
 | Screen load time | screen_load | Time from navigation push to first frame rendered (requires navigator observer) |
 | Long tasks (jank) | long_task | Detects when Dart main isolate is blocked beyond threshold (default: 100ms) |
 | ANR (App Not Responding) | anr | Native watchdog thread detects unresponsive main thread (default: 5s threshold) |
-| Frame build time | flutter.frame.build_time | Histogram of per-frame build durations |
-| Frame raster time | flutter.frame.raster_time | Histogram of per-frame raster durations |
-| Frozen frames | frozen_frame | Frames exceeding 700ms |
-| CPU usage | flutter.cpu.usage | Periodic CPU usage percentage |
-| Memory usage | flutter.memory.usage | Periodic native memory gauge |
+| Frame build time | flutter.frame.build_time | Histogram of per-frame build durations. Opt-in via `enableFrameMetrics` (default off — records on every frame with one stream per screen, the highest-volume metrics the SDK can produce) |
+| Frame raster time | flutter.frame.raster_time | Histogram of per-frame raster durations. Opt-in via `enableFrameMetrics` |
+| Frozen frames | frozen_frame | Frames exceeding 700ms (always on, independent of `enableFrameMetrics`) |
+| CPU usage | flutter.cpu.usage | CPU percentage gauge, polled every `vitalsCollectionIntervalSeconds` (default 60). Disable via `enableCpuMetrics` |
+| Memory usage | flutter.memory.usage | Native memory gauge, polled every `vitalsCollectionIntervalSeconds` (default 60). Disable via `enableMemoryMetrics` |
+
+Metrics are exported in batches every `metricExportIntervalSeconds` (default 60).
 
 
 User Interactions
@@ -221,11 +231,22 @@ ScoutFlutterConfig(
   enableNetworkTracking: true,
   enableLogging: true,
 
+  // Per-metric switches
+  enableFrameMetrics: false,                 // Per-frame histograms (default: off — very high volume)
+  enableMemoryMetrics: true,                 // flutter.memory.usage gauge
+  enableCpuMetrics: true,                    // flutter.cpu.usage gauge
+
+  // Metric cadence
+  metricExportIntervalSeconds: 60,           // Export batch interval (min: 1)
+  vitalsCollectionIntervalSeconds: 60,       // Memory/CPU poll interval (min: 1)
+
   // Thresholds
   longTaskThresholdMs: 100,                  // Min: 20ms
   anrThresholdMs: 5000,                      // Min: 1000ms
 
-  // Sessions
+  // Sessions — the sampling decision is made once per session and
+  // applies to ALL signals: spans, metrics, and logs. An unsampled
+  // session sends nothing (errors/crashes bypass by default).
   sessionSampleRate: 100.0,                  // 0.0 to 100.0
   sessionTimeoutMinutes: 30,                 // Rotate after inactivity
 
