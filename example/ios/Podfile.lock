@@ -1,0 +1,76 @@
+PODS:
+  - battery_plus (1.0.0):
+    - Flutter
+  - connectivity_plus (0.0.1):
+    - Flutter
+  - device_info_plus (0.0.1):
+    - Flutter
+  - Flutter (1.0.0)
+  - KSCrash (2.0.0):
+    - KSCrash/Installations (= 2.0.0)
+  - KSCrash/Core (2.0.0)
+  - KSCrash/DemangleFilter (2.0.0):
+    - KSCrash/Recording
+  - KSCrash/Filters (2.0.0):
+    - KSCrash/Recording
+    - KSCrash/RecordingCore
+    - KSCrash/ReportingCore
+  - KSCrash/Installations (2.0.0):
+    - KSCrash/DemangleFilter
+    - KSCrash/Filters
+    - KSCrash/Recording
+    - KSCrash/Sinks
+  - KSCrash/Recording (2.0.0):
+    - KSCrash/RecordingCore
+  - KSCrash/RecordingCore (2.0.0):
+    - KSCrash/Core
+  - KSCrash/ReportingCore (2.0.0):
+    - KSCrash/Core
+  - KSCrash/Sinks (2.0.0):
+    - KSCrash/Filters
+    - KSCrash/Recording
+  - path_provider_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - scout_flutter (0.0.1):
+    - Flutter
+    - KSCrash (~> 2.0.0-rc)
+
+DEPENDENCIES:
+  - battery_plus (from `.symlinks/plugins/battery_plus/ios`)
+  - connectivity_plus (from `.symlinks/plugins/connectivity_plus/ios`)
+  - device_info_plus (from `.symlinks/plugins/device_info_plus/ios`)
+  - Flutter (from `Flutter`)
+  - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
+  - scout_flutter (from `.symlinks/plugins/scout_flutter/ios`)
+
+SPEC REPOS:
+  trunk:
+    - KSCrash
+
+EXTERNAL SOURCES:
+  battery_plus:
+    :path: ".symlinks/plugins/battery_plus/ios"
+  connectivity_plus:
+    :path: ".symlinks/plugins/connectivity_plus/ios"
+  device_info_plus:
+    :path: ".symlinks/plugins/device_info_plus/ios"
+  Flutter:
+    :path: Flutter
+  path_provider_foundation:
+    :path: ".symlinks/plugins/path_provider_foundation/darwin"
+  scout_flutter:
+    :path: ".symlinks/plugins/scout_flutter/ios"
+
+SPEC CHECKSUMS:
+  battery_plus: b42253f6d2dde71712f8c36fef456d99121c5977
+  connectivity_plus: cb623214f4e1f6ef8fe7403d580fdad517d2f7dd
+  device_info_plus: 21fcca2080fbcd348be798aa36c3e5ed849eefbe
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  KSCrash: ad271a7799f0a2841be0fb7d6bd105444c440832
+  path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
+  scout_flutter: 1e83094a0a898f634c071f62e93cd854947f714a
+
+PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+
+COCOAPODS: 1.16.2
