@@ -38,6 +38,14 @@ pubspec.lock
 **/.build/
 **/Package.resolved
 
+# Local Scout K/N framework copies (built from scout-ios; never committed)
+ios/Scout.framework/
+ios/Scout.xcframework/
+
+# Local tooling / scratch
+.claude/
+*.bak
+
 # Linux / Windows
 **/linux/flutter/generated_*
 **/linux/flutter/ephemeral/
@@ -46,3 +54,4 @@ pubspec.lock
 
 # Generated docs
 **/doc/api/
+docs/superpowers/*
