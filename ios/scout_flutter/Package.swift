@@ -3,19 +3,19 @@ import PackageDescription
 
 let package = Package(
   name: "scout_flutter",
-  platforms: [.iOS("12.0")],
+  platforms: [.iOS("13.0")],
   products: [
     .library(name: "scout-flutter", targets: ["scout_flutter"])
   ],
   dependencies: [
-    .package(url: "https://github.com/kstenerud/KSCrash.git", from: "2.0.0")
+    .package(name: "Scout", path: "/Users/nimishgj/github/scout-android-again/scout-ios")
   ],
   targets: [
     .target(
       name: "scout_flutter",
       dependencies: [
-        .product(name: "Recording", package: "KSCrash"),
-        .product(name: "Installations", package: "KSCrash")
+        .product(name: "Scout", package: "Scout"),
+        .product(name: "ScoutNative", package: "Scout")
       ],
       path: "Sources/scout_flutter"
     )

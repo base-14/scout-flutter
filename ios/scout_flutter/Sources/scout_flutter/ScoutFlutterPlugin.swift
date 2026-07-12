@@ -1,15 +1,9 @@
 import Flutter
-#if canImport(KSCrash)
-import KSCrash
-#else
-import KSCrashRecording
-#endif
+import Scout
+import ScoutKit
 
 public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel
-    private var anrWatchdog: AppHangWatchdog?
-    private var uiHangWatchdog: AppHangWatchdog?
-    private var mainThreadPort: thread_t = thread_t(MACH_PORT_NULL)
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -18,12 +12,6 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         )
         let instance = ScoutFlutterPlugin(channel: channel)
         registrar.addMethodCallDelegate(instance, channel: channel)
-
-        // Install crash handlers as early as possible.
-        CrashReporter.install()
-        // Subscribe to MetricKit so delayed crash/hang payloads queue
-        // up in memory until the Dart side drains them.
-        ScoutMetricKitSubscriber.shared.start()
     }
 
     init(channel: FlutterMethodChannel) {
@@ -33,101 +21,61 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
-        case "startAnrDetection":
-            if mainThreadPort == thread_t(MACH_PORT_NULL) {
-                mainThreadPort = ScoutThreadBacktrace.currentPort()
-            }
+        case "initNativeDelegate":
             let args = call.arguments as? [String: Any]
-            let thresholdMs = args?["thresholdMs"] as? Int ?? 5000
-            anrWatchdog?.stop()
-            anrWatchdog = AppHangWatchdog(
-                label: "anr",
-                thresholdMs: thresholdMs
-            ) { [weak self] durationMs in
-                guard let self = self else { return }
-                let frames = ScoutThreadBacktrace.capture(self.mainThreadPort)
-                let mainStack = frames.joined(separator: "\n")
-                DispatchQueue.main.async {
-                    var payload: [String: Any] = ["duration": durationMs]
-                    if !mainStack.isEmpty {
-                        payload["main_thread_stack"] = mainStack
-                    }
-                    self.channel.invokeMethod("onAnrDetected", arguments: payload)
-                }
+            let serviceName = (args?["serviceName"] as? String) ?? ""
+            let endpoint = (args?["endpoint"] as? String) ?? ""
+            let environment = args?["environment"] as? String
+            let headers = (args?["headers"] as? [String: String]) ?? [:]
+            let sampleRate = (args?["sessionSampleRate"] as? Double) ?? 1.0
+            if serviceName.isEmpty || endpoint.isEmpty {
+                result(false)
+                return
             }
-            anrWatchdog?.start()
-            result(nil)
-        case "stopAnrDetection":
-            anrWatchdog?.stop()
-            anrWatchdog = nil
-            result(nil)
-        case "startUiHangDetection":
-            // Separate watchdog from ANR — fires at ~250 ms to catch
-            // micro-stutters (button tap → 300 ms freeze → recover).
-            // KSCrash's mainThreadDeadlock only fires at 5 s; this fills
-            // the gap.
-            let args = call.arguments as? [String: Any]
-            let thresholdMs = args?["thresholdMs"] as? Int ?? 250
-            uiHangWatchdog?.stop()
-            uiHangWatchdog = AppHangWatchdog(
-                label: "ui_hang",
-                thresholdMs: thresholdMs,
-                pollIntervalMs: max(20, thresholdMs / 4)
-            ) { [weak self] durationMs in
-                DispatchQueue.main.async {
-                    self?.channel.invokeMethod("onUiHangDetected", arguments: durationMs)
-                }
-            }
-            uiHangWatchdog?.start()
-            result(nil)
-        case "stopUiHangDetection":
-            uiHangWatchdog?.stop()
-            uiHangWatchdog = nil
-            result(nil)
-        case "getMemoryUsage":
-            var info = mach_task_basic_info()
-            var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
-            let resultCode = withUnsafeMutablePointer(to: &info) {
-                $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                    task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
-                }
-            }
-            if resultCode == KERN_SUCCESS {
-                result(["used": info.resident_size, "max": ProcessInfo.processInfo.physicalMemory])
-            } else {
-                result(["used": -1, "max": -1])
-            }
+            let anrMs = (args?["anrThresholdMs"] as? Double) ?? 3000
+            Scout.startBridge(
+                serviceName: serviceName,
+                endpoint: endpoint,
+                environment: environment,
+                headers: headers,
+                sessionSampleRate: sampleRate,
+                anrThresholdMs: anrMs
+            )
+            result(true)
 
-        case "getCpuUsage":
-            var threadList: thread_act_array_t?
-            var threadCount: mach_msg_type_number_t = 0
-            let threadResult = task_threads(mach_task_self_, &threadList, &threadCount)
-            var totalCpu = 0.0
-            if threadResult == KERN_SUCCESS, let threads = threadList {
-                for i in 0..<Int(threadCount) {
-                    var threadInfo = thread_basic_info()
-                    var threadInfoCount = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
-                    let infoResult = withUnsafeMutablePointer(to: &threadInfo) {
-                        $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                            thread_info(threads[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &threadInfoCount)
-                        }
-                    }
-                    if infoResult == KERN_SUCCESS {
-                        let usage = Double(threadInfo.cpu_usage) / Double(TH_USAGE_SCALE) * 100.0
-                        totalCpu += usage
-                    }
-                }
-                vm_deallocate(mach_task_self_, vm_address_t(bitPattern: threads), vm_size_t(threadCount) * vm_size_t(MemoryLayout<thread_t>.size))
-            }
-            result(["cpu_percent": totalCpu])
+        case "ingestSpans":
+            let json = ((call.arguments as? [String: Any])?["json"] as? String) ?? ""
+            ScoutEngine.shared.ingestForwardedSpans(payloadJson: json)
+            result(nil)
 
-        case "getNativeCrashReports":
-            let reports = CrashReporter.getPendingCrashReports()
-            result(reports)
+        case "ingestLogs":
+            let json = ((call.arguments as? [String: Any])?["json"] as? String) ?? ""
+            ScoutEngine.shared.ingestForwardedLogs(payloadJson: json)
+            result(nil)
 
-        case "getMetricKitReports":
-            let reports = ScoutMetricKitSubscriber.shared.drainPending()
-            result(reports)
+        case "ingestMetrics":
+            let json = ((call.arguments as? [String: Any])?["json"] as? String) ?? ""
+            ScoutEngine.shared.ingestForwardedMetrics(payloadJson: json)
+            result(nil)
+
+        case "pushBreadcrumbs":
+            let json = ((call.arguments as? [String: Any])?["json"] as? String) ?? ""
+            ScoutEngine.shared.pushBreadcrumbs(payloadJson: json)
+            result(nil)
+
+        case "setBreadcrumbs":
+            let json = ((call.arguments as? [String: Any])?["json"] as? String) ?? ""
+            ScoutEngine.shared.setBreadcrumbs(payloadJson: json)
+            result(nil)
+
+        case "readOwner":
+            let ctx = ScoutEngine.shared.bridgeContext()
+            result(ctx.isEmpty ? nil : ctx)
+
+        case "setScreen":
+            let name = ((call.arguments as? [String: Any])?["name"] as? String) ?? ""
+            ScoutEngine.shared.setScreen(name: name)
+            result(nil)
 
         case "getTimezone":
             result(TimeZone.current.identifier)
@@ -154,18 +102,6 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
 
         case "isDeviceCompromised":
             result(isJailbroken())
-
-        case "setBreadcrumbs":
-            let args = call.arguments as? [String: Any]
-            let json = (args?["json"] as? String) ?? ""
-            var info = KSCrash.shared.userInfo ?? [:]
-            if json.isEmpty {
-                info.removeValue(forKey: "breadcrumbs")
-            } else {
-                info["breadcrumbs"] = json
-            }
-            KSCrash.shared.userInfo = info
-            result(nil)
 
         default:
             result(FlutterMethodNotImplemented)
