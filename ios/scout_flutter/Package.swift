@@ -8,14 +8,17 @@ let package = Package(
     .library(name: "scout-flutter", targets: ["scout_flutter"])
   ],
   dependencies: [
-    .package(name: "Scout", path: "/Users/nimishgj/github/scout-android-again/scout-ios")
+    .package(
+      url: "https://github.com/base-14/scout-kotlin-multiplatform.git",
+      revision: "ios-0.1.4"
+    )
   ],
   targets: [
     .target(
       name: "scout_flutter",
       dependencies: [
-        .product(name: "Scout", package: "Scout"),
-        .product(name: "ScoutNative", package: "Scout")
+        .product(name: "Scout", package: "scout-kotlin-multiplatform"),
+        .product(name: "ScoutNative", package: "scout-kotlin-multiplatform")
       ],
       path: "Sources/scout_flutter"
     )
