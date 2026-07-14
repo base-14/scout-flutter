@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'auto_name_navigator_observer.dart';
 import 'fixed_http_metric_exporter.dart';
 import 'fixed_http_log_exporter.dart';
+import 'fixed_http_span_exporter.dart';
 import 'frame_metrics_collector.dart';
 import 'long_task_detector.dart';
 import 'native_vitals_collector.dart';
@@ -298,24 +299,6 @@ class ScoutFlutter {
   static bool shouldCapturePrint(String message) =>
       !message.startsWith('[scout]');
 
-  /// OTLP HTTP span exporter config. `maxRetries` defaults to 0
-  /// (at-most-once): the upstream exporter re-sends the whole batch on
-  /// ambiguous failures (timeouts, 429/503), and when the collector had
-  /// in fact ingested the first attempt the backend stores duplicate
-  /// spans with identical span IDs.
-  @visibleForTesting
-  static OtlpHttpExporterConfig buildSpanExporterConfig({
-    required String endpoint,
-    Map<String, String>? headers,
-    int maxRetries = 0,
-  }) {
-    return OtlpHttpExporterConfig(
-      endpoint: endpoint,
-      headers: headers,
-      maxRetries: maxRetries,
-    );
-  }
-
   static Future<void> _initializeCore(ScoutFlutterConfig config) async {
     _debugLogger = ScoutDebugLogger(enabled: config.debugLogging);
     final tempDir = await getTemporaryDirectory();
@@ -379,25 +362,35 @@ class ScoutFlutter {
           config.secure ? 'https://$httpEndpoint' : 'http://$httpEndpoint';
     }
 
+    // Keep-alive connections must outlive the gap between export ticks,
+    // or every beacon pays a fresh TCP + TLS handshake (the server
+    // re-sends its certificate chain each time).
+    final spanLogIdleTimeout = Duration(
+      seconds: config.exportIntervalSeconds + 35,
+    );
+    final metricIdleTimeout = Duration(
+      seconds: config.effectiveMetricExportIntervalSeconds + 35,
+    );
+
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
+    // FixedHttpSpanExporter holds one keep-alive connection; the upstream
+    // OtlpHttpSpanExporter opens a new connection per batch.
     final SpanExporter spanExporter =
         config.debugLogging
             ? ScoutDebugSpanExporter(
-              OtlpHttpSpanExporter(
-                buildSpanExporterConfig(
-                  endpoint: httpEndpoint,
-                  headers: config.headers,
-                  maxRetries: config.maxRetries,
-                ),
-              ),
-              _debugLogger,
-            )
-            : OtlpHttpSpanExporter(
-              buildSpanExporterConfig(
+              FixedHttpSpanExporter(
                 endpoint: httpEndpoint,
                 headers: config.headers,
                 maxRetries: config.maxRetries,
+                idleTimeout: spanLogIdleTimeout,
               ),
+              _debugLogger,
+            )
+            : FixedHttpSpanExporter(
+              endpoint: httpEndpoint,
+              headers: config.headers,
+              maxRetries: config.maxRetries,
+              idleTimeout: spanLogIdleTimeout,
             );
 
     final resolvedServiceVersion = await _resolveServiceVersion(
@@ -416,6 +409,7 @@ class ScoutFlutter {
               endpoint: httpEndpoint,
               headers: config.headers,
               maxRetries: config.maxRetries,
+              idleTimeout: metricIdleTimeout,
               // flutter.frame.duration is recorded per frame by the
               // upstream flutterrific layer; when Scout's frame metrics
               // are disabled, drop the upstream one too.
@@ -616,6 +610,7 @@ class ScoutFlutter {
         endpoint: httpEndpoint,
         headers: config.headers,
         maxRetries: config.maxRetries,
+        idleTimeout: spanLogIdleTimeout,
       );
       _logBatcher = ScoutLogBatcher(
         export: (batch) => _logExporter!.export(batch),

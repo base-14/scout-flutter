@@ -17,6 +17,7 @@ import 'package:dartastic_opentelemetry/proto/metrics/v1/metrics.pb.dart'
 import 'package:http/http.dart' as http;
 
 import 'scope.dart';
+import 'scout_http_client.dart';
 
 /// A fixed version of OtlpHttpMetricExporter that correctly creates
 /// InstrumentationScope as a new message instead of mutating the frozen default.
@@ -30,6 +31,7 @@ class FixedHttpMetricExporter implements MetricExporter {
   final int _maxRetries;
   final Duration _baseDelay;
   final Set<String> _dropMetricNames;
+  final http.Client _client;
   bool _isShutdown = false;
   final Random _random = Random();
 
@@ -40,6 +42,8 @@ class FixedHttpMetricExporter implements MetricExporter {
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 200),
     Set<String> dropMetricNames = const {},
+    Duration idleTimeout = const Duration(seconds: 65),
+    http.Client? client,
   }) : _endpoint =
            endpoint.endsWith('/v1/metrics')
                ? endpoint
@@ -48,7 +52,8 @@ class FixedHttpMetricExporter implements MetricExporter {
        _timeout = timeout,
        _maxRetries = maxRetries,
        _baseDelay = baseDelay,
-       _dropMetricNames = {..._alwaysDroppedMetricNames, ...dropMetricNames};
+       _dropMetricNames = {..._alwaysDroppedMetricNames, ...dropMetricNames},
+       _client = client ?? buildScoutHttpClient(idleTimeout: idleTimeout);
 
   /// Metrics emitted by the underlying flutterrific/dartastic layers that
   /// Scout intentionally never ships. `flutter.lifecycle.state_change` is
@@ -120,7 +125,7 @@ class FixedHttpMetricExporter implements MetricExporter {
     final Uint8List bodyBytes = request.writeToBuffer();
 
     try {
-      final response = await http
+      final response = await _client
           .post(Uri.parse(_endpoint), headers: headers, body: bodyBytes)
           .timeout(_timeout);
 
@@ -151,6 +156,7 @@ class FixedHttpMetricExporter implements MetricExporter {
   @override
   Future<bool> shutdown() async {
     _isShutdown = true;
+    _client.close();
     return true;
   }
 }

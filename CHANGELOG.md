@@ -11,6 +11,9 @@
 - `maxRetries` (default 0, min 0) — delivery attempts after failure, now applied to the span, metric, **and log** exporters. Logs previously retried up to 3× on ambiguous failures and could be delivered twice; they are now at-most-once like spans.
 - `metricExportIntervalSeconds` is now a nullable **metrics-specific override** — unset (default) means metrics follow `exportIntervalSeconds`.
 
+### Fixed — connection reuse (egress cost)
+- **Every export previously opened a fresh TCP + TLS connection.** All three exporters posted via `package:http`'s top-level `http.post`, which creates and closes a new client per call — so every beacon paid a full TLS handshake and the server re-sent its ~4–5 KB certificate chain each time (observed in production as ~5 KB of response-side egress per request and an ALB new-connections-dominated LCU bill). Each exporter now holds one keep-alive client for its lifetime, with the idle timeout sized to outlive the export interval — one handshake per app session per signal instead of one per beacon. The span exporter is now Scout's own `FixedHttpSpanExporter` (the upstream `OtlpHttpSpanExporter` cannot reuse connections), keeping at-most-once delivery.
+
 ### Added — log batching
 - Logs are now batched like spans and metrics via a new internal batcher: buffered up to `maxQueueSize`, flushed every `exportIntervalSeconds` or as soon as `maxExportBatchSize` records accumulate, and force-flushed when the app is backgrounded. Previously **every log entry was its own HTTP POST**.
 

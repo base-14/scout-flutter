@@ -83,6 +83,8 @@ All three signals share one batching model, governed by four knobs:
 
 Offline buffering is **off by default** (`offlineBufferEnabled: false`, per-signal caps 0) — nothing is stored on disk. Opt in for durability at the cost of possible duplicate delivery on replay.
 
+Each signal's exporter holds a single keep-alive HTTP connection (idle timeout sized to outlive the export interval), so TLS handshakes happen once per app session per signal — not once per export.
+
 ## Debug Logging
 
 Set `debugLogging: true` to print a `[scout]` line for every init, session rotation, sampling decision, export batch, and log entry. Useful while integrating; noisy in production.

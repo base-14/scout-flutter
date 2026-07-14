@@ -18,6 +18,7 @@ import 'package:fixnum/fixnum.dart';
 import 'package:http/http.dart' as http;
 
 import 'scope.dart';
+import 'scout_http_client.dart';
 
 /// A log record to be exported via OTLP.
 class ScoutLogRecord {
@@ -53,6 +54,7 @@ class FixedHttpLogExporter {
   final Duration _baseDelay;
   bool _isShutdown = false;
   final Random _random = Random();
+  late final http.Client _client;
 
   FixedHttpLogExporter({
     required String endpoint,
@@ -60,6 +62,8 @@ class FixedHttpLogExporter {
     Duration timeout = const Duration(seconds: 10),
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 200),
+    Duration idleTimeout = const Duration(seconds: 65),
+    http.Client? client,
   }) : _endpoint =
            endpoint.endsWith('/v1/logs')
                ? endpoint
@@ -67,7 +71,8 @@ class FixedHttpLogExporter {
        _headers = headers ?? {},
        _timeout = timeout,
        _maxRetries = maxRetries,
-       _baseDelay = baseDelay;
+       _baseDelay = baseDelay,
+       _client = client ?? buildScoutHttpClient(idleTimeout: idleTimeout);
 
   /// Exports a list of [ScoutLogRecord]s to the configured OTLP endpoint.
   ///
@@ -163,7 +168,7 @@ class FixedHttpLogExporter {
 
     final Uint8List bodyBytes = request.writeToBuffer();
 
-    final response = await http
+    final response = await _client
         .post(Uri.parse(_endpoint), headers: headers, body: bodyBytes)
         .timeout(_timeout);
 
@@ -191,6 +196,7 @@ class FixedHttpLogExporter {
   /// Marks this exporter as shut down. Subsequent [export] calls return false.
   Future<bool> shutdown() async {
     _isShutdown = true;
+    _client.close();
     return true;
   }
 
