@@ -106,10 +106,15 @@ Performance
 | Frame build time | flutter.frame.build_time | Histogram of per-frame build durations. Opt-in via `enableFrameMetrics` (default off — records on every frame with one stream per screen, the highest-volume metrics the SDK can produce) |
 | Frame raster time | flutter.frame.raster_time | Histogram of per-frame raster durations. Opt-in via `enableFrameMetrics` |
 | Frozen frames | frozen_frame | Frames exceeding 700ms (always on, independent of `enableFrameMetrics`) |
-| CPU usage | flutter.cpu.usage | CPU percentage gauge, polled every `vitalsCollectionIntervalSeconds` (default 60). Disable via `enableCpuMetrics` |
-| Memory usage | flutter.memory.usage | Native memory gauge, polled every `vitalsCollectionIntervalSeconds` (default 60). Disable via `enableMemoryMetrics` |
+| CPU usage | flutter.cpu.usage | CPU percentage gauge — opt-in via `enableCpuMetrics` (default off). Polled every `vitalsCollectionIntervalSeconds` (default 60) |
+| Memory usage | flutter.memory.usage | Native memory gauge — opt-in via `enableMemoryMetrics` (default off). Polled every `vitalsCollectionIntervalSeconds` (default 60) |
 
-Metrics are exported in batches every `metricExportIntervalSeconds` (default 60).
+All signals (spans, metrics, logs) are batched and exported every
+`exportIntervalSeconds` (default 30), up to `maxExportBatchSize` items per
+batch (default 512), buffering at most `maxQueueSize` items (default 2048),
+with `maxRetries` delivery attempts after failure (default 0 — at-most-once,
+no duplicates). `metricExportIntervalSeconds` optionally overrides the
+interval for metrics only.
 
 
 User Interactions
@@ -231,13 +236,18 @@ ScoutFlutterConfig(
   enableNetworkTracking: true,
   enableLogging: true,
 
-  // Per-metric switches
-  enableFrameMetrics: false,                 // Per-frame histograms (default: off — very high volume)
-  enableMemoryMetrics: true,                 // flutter.memory.usage gauge
-  enableCpuMetrics: true,                    // flutter.cpu.usage gauge
+  // Per-metric switches (all default: off — the SDK ships no metrics
+  // unless you opt in)
+  enableFrameMetrics: false,                 // Per-frame histograms (very high volume)
+  enableMemoryMetrics: false,                // flutter.memory.usage gauge
+  enableCpuMetrics: false,                   // flutter.cpu.usage gauge
 
-  // Metric cadence
-  metricExportIntervalSeconds: 60,           // Export batch interval (min: 1)
+  // Batch & export — applies to spans, metrics, AND logs
+  exportIntervalSeconds: 30,                 // Export cadence for all signals (min: 1)
+  maxExportBatchSize: 512,                   // Max items per batch (min: 1)
+  maxQueueSize: 2048,                        // Max buffered items; overflow dropped (min: 1)
+  maxRetries: 0,                             // Delivery attempts after failure (at-most-once)
+  metricExportIntervalSeconds: null,         // Optional metrics-only interval override
   vitalsCollectionIntervalSeconds: 60,       // Memory/CPU poll interval (min: 1)
 
   // Thresholds
@@ -257,8 +267,14 @@ ScoutFlutterConfig(
   // Logging
   capturePrintStatements: false,             // Capture debugPrint() as logs
 
-  // Storage
-  maxOfflineStorageMb: 5,                    // Offline queue cap
+  // Storage — offline buffering is fully DISABLED by default: nothing
+  // is written to disk and failed exports are dropped (at-most-once).
+  // Opt in for durability:
+  offlineBufferEnabled: false,               // default: false
+  offlineMaxTraceItems: 0,                   // default: 0 (signal disabled)
+  offlineMaxMetricItems: 0,                  // default: 0
+  offlineMaxLogItems: 0,                     // default: 0
+  maxOfflineStorageMb: 5,                    // Coarse disk cap when enabled
 
   // Filtering
   beforeSend: (event) {

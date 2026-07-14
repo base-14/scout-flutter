@@ -1,3 +1,22 @@
+## 0.1.23
+
+### Changed — minimal-telemetry defaults
+- **`enableMemoryMetrics` and `enableCpuMetrics` now default to `false`.** With `enableFrameMetrics` already off, the SDK ships **no metrics by default** — vitals gauges are opt-in per app.
+- **Offline buffering is now fully disabled by default**: `offlineBufferEnabled: false` and `offlineMaxTraceItems` / `offlineMaxMetricItems` / `offlineMaxLogItems` all `0`. Nothing is stored on disk; a failed export is dropped (strict at-most-once). Set `offlineBufferEnabled: true` plus per-signal caps to restore the old durability behavior.
+
+### Added — unified batch/export config (applies to spans, metrics, AND logs)
+- `exportIntervalSeconds` (default 30, min 1) — one export cadence for all three signals. Spans previously batched on a hardcoded 5 s schedule; metrics on 60 s; logs not at all.
+- `maxExportBatchSize` (default 512, min 1) — max items per export batch.
+- `maxQueueSize` (default 2048, min 1) — max items buffered awaiting export; overflow is dropped.
+- `maxRetries` (default 0, min 0) — delivery attempts after failure, now applied to the span, metric, **and log** exporters. Logs previously retried up to 3× on ambiguous failures and could be delivered twice; they are now at-most-once like spans.
+- `metricExportIntervalSeconds` is now a nullable **metrics-specific override** — unset (default) means metrics follow `exportIntervalSeconds`.
+
+### Added — log batching
+- Logs are now batched like spans and metrics via a new internal batcher: buffered up to `maxQueueSize`, flushed every `exportIntervalSeconds` or as soon as `maxExportBatchSize` records accumulate, and force-flushed when the app is backgrounded. Previously **every log entry was its own HTTP POST**.
+
+### Fixed
+- The InstrumentationScope version on every span/metric/log now matches the package version (it had been stuck at `0.1.5` since that release, making SDK-version adoption invisible to backends). A guard test fails CI if `scope.dart` and `pubspec.yaml` ever drift again.
+
 ## 0.1.22
 
 ### Fixed

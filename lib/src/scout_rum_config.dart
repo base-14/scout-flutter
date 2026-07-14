@@ -57,14 +57,41 @@ class ScoutFlutterConfig {
   final bool enableFrameMetrics;
 
   /// Whether to record the periodic `flutter.memory.usage` gauge.
+  /// Off by default — opt in per app.
   final bool enableMemoryMetrics;
 
   /// Whether to record the periodic `flutter.cpu.usage` gauge.
+  /// Off by default — opt in per app.
   final bool enableCpuMetrics;
 
-  /// Seconds between metric export batches (OTLP HTTP POSTs).
-  /// Values below 1 are clamped to 1. Default 60.
-  final int metricExportIntervalSeconds;
+  /// Seconds between export batches for every signal (spans, metrics,
+  /// and logs). Values below 1 are clamped to 1. Default 30.
+  final int exportIntervalSeconds;
+
+  /// Maximum items per export batch, applied to every signal.
+  /// Values below 1 are clamped to 1. Default 512.
+  final int maxExportBatchSize;
+
+  /// Maximum items buffered awaiting export, applied to every signal.
+  /// Items beyond the cap are dropped. Values below 1 are clamped to 1.
+  /// Default 2048.
+  final int maxQueueSize;
+
+  /// Retry attempts after a failed export, applied to every signal.
+  /// Default 0 (at-most-once): retrying after an ambiguous failure —
+  /// a timeout whose request the collector may have already ingested —
+  /// delivers duplicates. Values below 0 are clamped to 0.
+  final int maxRetries;
+
+  /// Metrics-specific override for [exportIntervalSeconds]. Null
+  /// (default) means metrics follow the unified interval. Values below
+  /// 1 are clamped to 1.
+  final int? metricExportIntervalSeconds;
+
+  /// The metric export interval actually in effect:
+  /// [metricExportIntervalSeconds] when set, else [exportIntervalSeconds].
+  int get effectiveMetricExportIntervalSeconds =>
+      metricExportIntervalSeconds ?? exportIntervalSeconds;
 
   /// Seconds between native memory/CPU polls. Values below 1 are
   /// clamped to 1. Default 60.
@@ -173,9 +200,13 @@ class ScoutFlutterConfig {
     this.customGestureDetector,
     this.enablePerformanceMetrics = true,
     this.enableFrameMetrics = false,
-    this.enableMemoryMetrics = true,
-    this.enableCpuMetrics = true,
-    int metricExportIntervalSeconds = 60,
+    this.enableMemoryMetrics = false,
+    this.enableCpuMetrics = false,
+    int exportIntervalSeconds = 30,
+    int maxExportBatchSize = 512,
+    int maxQueueSize = 2048,
+    int maxRetries = 0,
+    int? metricExportIntervalSeconds,
     int vitalsCollectionIntervalSeconds = 60,
     this.enableLongTaskDetection = true,
     int longTaskThresholdMs = 100,
@@ -195,16 +226,25 @@ class ScoutFlutterConfig {
     this.enableLogging = true,
     this.capturePrintStatements = false,
     this.maxOfflineStorageMb = 5,
-    this.offlineBufferEnabled = true,
-    this.offlineMaxTraceItems = 5000,
-    this.offlineMaxMetricItems = 2000,
-    this.offlineMaxLogItems = 5000,
+    this.offlineBufferEnabled = false,
+    this.offlineMaxTraceItems = 0,
+    this.offlineMaxMetricItems = 0,
+    this.offlineMaxLogItems = 0,
     int maxTombstoneBytes = 131072,
     this.beforeSend,
     this.debugLogging = false,
   }) : maxTombstoneBytes = maxTombstoneBytes < 4096 ? 4096 : maxTombstoneBytes,
+       exportIntervalSeconds =
+           exportIntervalSeconds < 1 ? 1 : exportIntervalSeconds,
+       maxExportBatchSize = maxExportBatchSize < 1 ? 1 : maxExportBatchSize,
+       maxQueueSize = maxQueueSize < 1 ? 1 : maxQueueSize,
+       maxRetries = maxRetries < 0 ? 0 : maxRetries,
        metricExportIntervalSeconds =
-           metricExportIntervalSeconds < 1 ? 1 : metricExportIntervalSeconds,
+           metricExportIntervalSeconds == null
+               ? null
+               : (metricExportIntervalSeconds < 1
+                   ? 1
+                   : metricExportIntervalSeconds),
        vitalsCollectionIntervalSeconds =
            vitalsCollectionIntervalSeconds < 1
                ? 1

@@ -23,8 +23,8 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 | ANR | `anr` | Native watchdog detects unresponsive main thread; captures full thread dump and breadcrumbs |
 | Frame metrics | `flutter.frame.build_time`, `flutter.frame.raster_time` | Per-frame build and raster histograms — opt-in via `enableFrameMetrics` (default off; records every frame, one stream per screen) |
 | Frozen frames | `frozen_frame` | Frames exceeding 700ms |
-| Memory | `flutter.memory.usage` | Periodic native memory gauge (`vitalsCollectionIntervalSeconds`, default 60s; disable via `enableMemoryMetrics`) |
-| CPU | `flutter.cpu.usage` | Periodic CPU usage percentage gauge (disable via `enableCpuMetrics`) |
+| Memory | `flutter.memory.usage` | Native memory gauge — opt-in via `enableMemoryMetrics` (default off; polled every `vitalsCollectionIntervalSeconds`, default 60s) |
+| CPU | `flutter.cpu.usage` | CPU percentage gauge — opt-in via `enableCpuMetrics` (default off) |
 | Crash detection | `app_crash` | Detects OOM/SIGKILL/exit crashes via session marker |
 | Native crashes | `native_crash` | JVM exceptions, NDK signals (SIGSEGV, SIGABRT, etc.) with full stack trace, registers, memory map |
 
@@ -74,9 +74,14 @@ Error- and crash-class spans (`error`, `native_crash`, `app_crash`, `anr`, `ui_h
 
 ## Export cadence
 
-- **Spans** — batched, exported every 5 s, single-attempt delivery (no retries, so a batch is never duplicated on the backend).
-- **Metrics** — exported every `metricExportIntervalSeconds` (default 60). Memory/CPU are polled every `vitalsCollectionIntervalSeconds` (default 60).
-- **Logs** — exported per entry; failed exports are queued offline and replayed.
+All three signals share one batching model, governed by four knobs:
+
+- `exportIntervalSeconds` (default 30) — export cadence for spans, metrics, and logs. (`metricExportIntervalSeconds` remains as an optional metrics-only override.)
+- `maxExportBatchSize` (default 512) — max items per batch.
+- `maxQueueSize` (default 2048) — max items buffered; overflow is dropped.
+- `maxRetries` (default 0) — delivery is at-most-once for every signal, so a batch is never duplicated on the backend. Failed exports are dropped unless offline buffering is enabled.
+
+Offline buffering is **off by default** (`offlineBufferEnabled: false`, per-signal caps 0) — nothing is stored on disk. Opt in for durability at the cost of possible duplicate delivery on replay.
 
 ## Debug Logging
 
@@ -108,8 +113,9 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 - `beforeSend` config — filter or modify events before export
 - `maxTombstoneBytes` config — cap on Android exit-info tombstone bytes captured for ANR/native post-mortems
 - `enableFrameMetrics` config — opt into per-frame build/raster histograms (default off; highest-volume metrics)
-- `enableMemoryMetrics` / `enableCpuMetrics` config — toggle the periodic vitals gauges individually
-- `metricExportIntervalSeconds` config — metric export batch interval (default 60)
+- `enableMemoryMetrics` / `enableCpuMetrics` config — opt into the periodic vitals gauges (default off)
+- `exportIntervalSeconds` / `maxExportBatchSize` / `maxQueueSize` / `maxRetries` config — unified batch/export tuning for spans, metrics, and logs (defaults 30 / 512 / 2048 / 0)
+- `metricExportIntervalSeconds` config — optional metrics-only override of the unified export interval
 - `vitalsCollectionIntervalSeconds` config — memory/CPU poll interval (default 60)
 
 ## Architecture

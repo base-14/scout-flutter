@@ -8,6 +8,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:dartastic_opentelemetry/dartastic_opentelemetry.dart'
+    show BatchSpanProcessorConfig;
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -24,6 +26,7 @@ import 'scout_debug_span_exporter.dart';
 import 'scout_dio_interceptor.dart';
 import 'scout_http_overrides.dart';
 import 'scope.dart';
+import 'scout_log_batcher.dart';
 import 'scout_logger.dart' as scout_log;
 import 'scout_platform_channel.dart';
 import 'scout_rum_config.dart';
@@ -84,6 +87,7 @@ class ScoutFlutter {
   );
   static scout_log.ScoutLogger? _logger;
   static FixedHttpLogExporter? _logExporter;
+  static ScoutLogBatcher? _logBatcher;
   static OfflineQueue? _offlineQueue;
   static Timer? _offlineFlushTimer;
   static ScoutDioInterceptor? _dioInterceptor;
@@ -294,20 +298,21 @@ class ScoutFlutter {
   static bool shouldCapturePrint(String message) =>
       !message.startsWith('[scout]');
 
-  /// OTLP HTTP span exporter config. `maxRetries: 0` is deliberate:
-  /// the upstream exporter re-sends the whole batch on ambiguous
-  /// failures (timeouts, 429/503), and when the collector had in fact
-  /// ingested the first attempt the backend stores duplicate spans
-  /// with identical span IDs. RUM traffic prefers at-most-once.
+  /// OTLP HTTP span exporter config. `maxRetries` defaults to 0
+  /// (at-most-once): the upstream exporter re-sends the whole batch on
+  /// ambiguous failures (timeouts, 429/503), and when the collector had
+  /// in fact ingested the first attempt the backend stores duplicate
+  /// spans with identical span IDs.
   @visibleForTesting
   static OtlpHttpExporterConfig buildSpanExporterConfig({
     required String endpoint,
     Map<String, String>? headers,
+    int maxRetries = 0,
   }) {
     return OtlpHttpExporterConfig(
       endpoint: endpoint,
       headers: headers,
-      maxRetries: 0,
+      maxRetries: maxRetries,
     );
   }
 
@@ -382,6 +387,7 @@ class ScoutFlutter {
                 buildSpanExporterConfig(
                   endpoint: httpEndpoint,
                   headers: config.headers,
+                  maxRetries: config.maxRetries,
                 ),
               ),
               _debugLogger,
@@ -390,6 +396,7 @@ class ScoutFlutter {
               buildSpanExporterConfig(
                 endpoint: httpEndpoint,
                 headers: config.headers,
+                maxRetries: config.maxRetries,
               ),
             );
 
@@ -408,6 +415,7 @@ class ScoutFlutter {
             ? FixedHttpMetricExporter(
               endpoint: httpEndpoint,
               headers: config.headers,
+              maxRetries: config.maxRetries,
               // flutter.frame.duration is recorded per frame by the
               // upstream flutterrific layer; when Scout's frame metrics
               // are disabled, drop the upstream one too.
@@ -422,7 +430,9 @@ class ScoutFlutter {
             ? null
             : PeriodicExportingMetricReader(
               metricExporter,
-              interval: Duration(seconds: config.metricExportIntervalSeconds),
+              interval: Duration(
+                seconds: config.effectiveMetricExportIntervalSeconds,
+              ),
             );
 
     await FlutterOTel.initialize(
@@ -438,7 +448,14 @@ class ScoutFlutter {
         alwaysCaptureErrors: config.alwaysCaptureErrors,
         logger: config.debugLogging ? _debugLogger : null,
       ),
-      spanProcessor: BatchSpanProcessor(spanExporter),
+      spanProcessor: BatchSpanProcessor(
+        spanExporter,
+        BatchSpanProcessorConfig(
+          maxQueueSize: config.maxQueueSize,
+          scheduleDelay: Duration(seconds: config.exportIntervalSeconds),
+          maxExportBatchSize: config.maxExportBatchSize,
+        ),
+      ),
       metricExporter: metricExporter,
       metricReader: metricReader,
       resourceAttributes:
@@ -592,12 +609,32 @@ class ScoutFlutter {
       } catch (_) {}
     });
 
-    // Structured logging
+    // Structured logging — batched like spans and metrics: one export
+    // per interval (or per full batch) instead of one POST per log line.
     if (config.enableLogging) {
       _logExporter = FixedHttpLogExporter(
         endpoint: httpEndpoint,
         headers: config.headers,
+        maxRetries: config.maxRetries,
       );
+      _logBatcher = ScoutLogBatcher(
+        export: (batch) => _logExporter!.export(batch),
+        onExportFailed: (batch) {
+          _offlineQueue?.enqueue('logs', [
+            for (final record in batch)
+              {
+                'severity_number': record.severityNumber,
+                'severity_text': record.severityText,
+                'body': record.body,
+                'timestamp_nanos': record.timestampNanos.toString(),
+                ...?record.attributes,
+              },
+          ]);
+        },
+        interval: Duration(seconds: config.exportIntervalSeconds),
+        maxExportBatchSize: config.maxExportBatchSize,
+        maxQueueSize: config.maxQueueSize,
+      )..start();
       _logger = scout_log.ScoutLogger(onLog: _onLogEntry);
 
       // Capture debugPrint() as info-level logs
@@ -736,6 +773,9 @@ class ScoutFlutter {
   static void _forceFlushAll() {
     try {
       FlutterOTel.forceFlush();
+    } catch (_) {}
+    try {
+      _logBatcher?.flush();
     } catch (_) {}
   }
 
@@ -1766,24 +1806,7 @@ class ScoutFlutter {
         traceId: _activeTraceId,
         spanId: _activeSpanId,
       );
-      _logExporter
-          ?.export([logRecord])
-          .then((success) {
-            if (!success) {
-              _offlineQueue?.enqueue('logs', [
-                {
-                  'severity_number': logRecord.severityNumber,
-                  'severity_text': logRecord.severityText,
-                  'body': logRecord.body,
-                  'timestamp_nanos': logRecord.timestampNanos.toString(),
-                  ...?logRecord.attributes,
-                },
-              ]);
-            }
-          })
-          .catchError((_) {
-            // Silently handle export errors
-          });
+      _logBatcher?.add(logRecord);
     } catch (_) {}
   }
 
@@ -1864,6 +1887,8 @@ class ScoutFlutter {
       alwaysCaptureErrors: true,
     );
     _logger = null;
+    _logBatcher?.stop();
+    _logBatcher = null;
     _logExporter = null;
     _offlineQueue = null;
     _offlineFlushTimer?.cancel();

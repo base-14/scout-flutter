@@ -3,13 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('ScoutFlutterConfig metric intervals', () {
-    test('metricExportIntervalSeconds defaults to 60', () {
+    test('metricExportIntervalSeconds defaults to null (unified interval)', () {
       final config = ScoutFlutterConfig(
         serviceName: 'test-app',
         endpoint: 'https://otel.example.com',
       );
 
-      expect(config.metricExportIntervalSeconds, 60);
+      expect(config.metricExportIntervalSeconds, isNull);
     });
 
     test('honors explicit metricExportIntervalSeconds', () {
@@ -78,14 +78,14 @@ void main() {
       expect(config.enableFrameMetrics, false);
     });
 
-    test('enableMemoryMetrics and enableCpuMetrics default to true', () {
+    test('enableMemoryMetrics and enableCpuMetrics default to false', () {
       final config = ScoutFlutterConfig(
         serviceName: 'test-app',
         endpoint: 'https://otel.example.com',
       );
 
-      expect(config.enableMemoryMetrics, true);
-      expect(config.enableCpuMetrics, true);
+      expect(config.enableMemoryMetrics, false);
+      expect(config.enableCpuMetrics, false);
     });
 
     test('honors explicit per-metric switches', () {
