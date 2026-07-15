@@ -33,13 +33,15 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 return
             }
             let anrMs = (args?["anrThresholdMs"] as? Double) ?? 3000
+            let flutterVersion = args?["scoutFlutterVersion"] as? String
             Scout.startBridge(
                 serviceName: serviceName,
                 endpoint: endpoint,
                 environment: environment,
                 headers: headers,
                 sessionSampleRate: sampleRate,
-                anrThresholdMs: anrMs
+                anrThresholdMs: anrMs,
+                resourceAttributes: flutterVersion.map { ["scout.flutter.version": $0] } ?? [:]
             )
             result(true)
 

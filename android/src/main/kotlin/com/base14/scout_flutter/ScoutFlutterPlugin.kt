@@ -96,6 +96,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     return
                 }
                 val ok = runCatching {
+                    val flutterVersion = call.argument<String>("scoutFlutterVersion")
                     Scout.initialize(
                         ctx,
                         ScoutConfig(
@@ -108,6 +109,8 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                             enableScreenTracking = false,
                             enableTapTracking = false,
                             enableStartupTracking = false,
+                            resourceAttributes =
+                                if (flutterVersion != null) mapOf("scout.flutter.version" to flutterVersion) else emptyMap(),
                         ),
                     )
                 }.isSuccess

@@ -355,6 +355,7 @@ class ScoutFlutter {
       if (config.environment != null) 'environment': config.environment!,
       ...?config.resourceAttributes,
       ...await _collectDeviceAttributes(),
+      'scout.flutter.version': kScopeVersion,
     };
 
     // Build the HTTP endpoint for export (both traces and metrics).
@@ -381,6 +382,7 @@ class ScoutFlutter {
       'headers': config.headers,
       if (config.environment != null) 'environment': config.environment,
       'sessionSampleRate': config.sessionSampleRate,
+      'scoutFlutterVersion': kScopeVersion,
     });
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
