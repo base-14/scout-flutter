@@ -41,7 +41,20 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 headers: headers,
                 sessionSampleRate: sampleRate,
                 anrThresholdMs: anrMs,
-                resourceAttributes: flutterVersion.map { ["scout.flutter.version": $0] } ?? [:]
+                resourceAttributes: flutterVersion.map { ["scout.flutter.version": $0] } ?? [:],
+                exportIntervalSeconds: (args?["exportIntervalSeconds"] as? Int) ?? 30,
+                maxExportBatchSize: (args?["maxExportBatchSize"] as? Int) ?? 512,
+                maxQueueSize: (args?["maxQueueSize"] as? Int) ?? 2048,
+                maxRetries: (args?["maxRetries"] as? Int) ?? 0,
+                vitalsCollectionIntervalSeconds: (args?["vitalsCollectionIntervalSeconds"] as? Int) ?? 60,
+                offlineBufferEnabled: (args?["offlineBufferEnabled"] as? Bool) ?? false,
+                enableMemoryMetrics: (args?["enableMemoryMetrics"] as? Bool) ?? false,
+                enableCpuMetrics: (args?["enableCpuMetrics"] as? Bool) ?? false,
+                enableFrameMetrics: (args?["enableFrameMetrics"] as? Bool) ?? false,
+                metricExportIntervalSeconds: (args?["metricExportIntervalSeconds"] as? Int) ?? -1,
+                offlineMaxTraceItems: (args?["offlineMaxTraceItems"] as? Int) ?? 0,
+                offlineMaxMetricItems: (args?["offlineMaxMetricItems"] as? Int) ?? 0,
+                offlineMaxLogItems: (args?["offlineMaxLogItems"] as? Int) ?? 0
             )
             result(true)
 

@@ -111,6 +111,19 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                             enableStartupTracking = false,
                             resourceAttributes =
                                 if (flutterVersion != null) mapOf("scout.flutter.version" to flutterVersion) else emptyMap(),
+                            exportIntervalSeconds = call.argument<Int>("exportIntervalSeconds") ?: 30,
+                            maxExportBatchSize = call.argument<Int>("maxExportBatchSize") ?: 512,
+                            maxQueueSize = call.argument<Int>("maxQueueSize") ?: 2048,
+                            maxRetries = call.argument<Int>("maxRetries") ?: 0,
+                            vitalsCollectionIntervalSeconds = call.argument<Int>("vitalsCollectionIntervalSeconds") ?: 60,
+                            offlineBufferEnabled = call.argument<Boolean>("offlineBufferEnabled") ?: false,
+                            enableMemoryMetrics = call.argument<Boolean>("enableMemoryMetrics") ?: false,
+                            enableCpuMetrics = call.argument<Boolean>("enableCpuMetrics") ?: false,
+                            enableFrameMetrics = call.argument<Boolean>("enableFrameMetrics") ?: false,
+                            metricExportIntervalSeconds = call.argument<Int>("metricExportIntervalSeconds")?.takeIf { it > 0 },
+                            offlineMaxTraceItems = call.argument<Int>("offlineMaxTraceItems") ?: 0,
+                            offlineMaxMetricItems = call.argument<Int>("offlineMaxMetricItems") ?: 0,
+                            offlineMaxLogItems = call.argument<Int>("offlineMaxLogItems") ?: 0,
                         ),
                     )
                 }.isSuccess

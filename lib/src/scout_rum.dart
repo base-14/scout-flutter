@@ -383,6 +383,19 @@ class ScoutFlutter {
       if (config.environment != null) 'environment': config.environment,
       'sessionSampleRate': config.sessionSampleRate,
       'scoutFlutterVersion': kScopeVersion,
+      'exportIntervalSeconds': config.exportIntervalSeconds,
+      'maxExportBatchSize': config.maxExportBatchSize,
+      'maxQueueSize': config.maxQueueSize,
+      'maxRetries': config.maxRetries,
+      'vitalsCollectionIntervalSeconds': config.vitalsCollectionIntervalSeconds,
+      'offlineBufferEnabled': config.offlineBufferEnabled,
+      'enableMemoryMetrics': config.enableMemoryMetrics,
+      'enableCpuMetrics': config.enableCpuMetrics,
+      'enableFrameMetrics': config.enableFrameMetrics,
+      'metricExportIntervalSeconds': config.metricExportIntervalSeconds ?? -1,
+      'offlineMaxTraceItems': config.offlineMaxTraceItems,
+      'offlineMaxMetricItems': config.offlineMaxMetricItems,
+      'offlineMaxLogItems': config.offlineMaxLogItems,
     });
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
