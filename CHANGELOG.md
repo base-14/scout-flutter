@@ -1,3 +1,8 @@
+## 0.1.24
+
+### Fixed
+- **Android 16 KB page-size compliance.** `libscout_crash_handler.so` was linked with 4 KB ELF segment alignment, which fails to load on Android 15+ devices booted with 16 KB memory pages and blocks Google Play's 16 KB requirement. The NDK library is now linked with `-Wl,-z,max-page-size=16384` explicitly — the plugin is compiled by each consuming app with whatever NDK that app pins, so the flag cannot be left to NDK r27+ defaults. Verified: LOAD segment alignment is now `0x4000` on both `arm64-v8a` and `x86_64`.
+
 ## 0.1.23
 
 ### Changed — minimal-telemetry defaults
