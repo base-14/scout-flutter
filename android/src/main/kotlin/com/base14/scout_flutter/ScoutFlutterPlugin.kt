@@ -124,6 +124,8 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                             offlineMaxTraceItems = call.argument<Int>("offlineMaxTraceItems") ?: 0,
                             offlineMaxMetricItems = call.argument<Int>("offlineMaxMetricItems") ?: 0,
                             offlineMaxLogItems = call.argument<Int>("offlineMaxLogItems") ?: 0,
+                            firstPartyHosts = call.argument<List<String>>("firstPartyHosts") ?: emptyList(),
+                            debugLogging = call.argument<Boolean>("debugLogging") ?: false,
                         ),
                     )
                 }.isSuccess

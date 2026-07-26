@@ -396,6 +396,8 @@ class ScoutFlutter {
       'offlineMaxTraceItems': config.offlineMaxTraceItems,
       'offlineMaxMetricItems': config.offlineMaxMetricItems,
       'offlineMaxLogItems': config.offlineMaxLogItems,
+      'debugLogging': config.debugLogging,
+      if (config.firstPartyHosts != null) 'firstPartyHosts': config.firstPartyHosts,
     });
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
@@ -624,7 +626,11 @@ class ScoutFlutter {
     //      the kernel knew about: ANR, OOM kill, native crash, etc.
     // All three feed the same `native_crash` span shape so the
     // backend doesn't need to branch on source.
-    if (!_delegating) await _drainCrashReports();
+    if (!_delegating) {
+      await _drainCrashReports();
+    } else {
+      await _discardDelegatedCrashReports();
+    }
     _previousSessionBreadcrumbs = null;
 
     // Periodic offline flush (every 60 seconds)
@@ -1479,6 +1485,12 @@ class ScoutFlutter {
   /// Pull every kind of native crash signal we can — the native crash reporter on iOS,
   /// in-process JVM + JNI on Android, MetricKit, ApplicationExitInfo —
   /// and emit each as a `native_crash` span with the full attribute set.
+  static Future<void> _discardDelegatedCrashReports() async {
+    try {
+      await ScoutPlatformChannel.getNativeCrashReports();
+    } catch (_) {}
+  }
+
   static Future<void> _drainCrashReports() async {
     final drainStart = DateTime.now().toUtc();
     final sources = <Future<List<Map<String, dynamic>>>>[

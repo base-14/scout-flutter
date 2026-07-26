@@ -54,7 +54,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 metricExportIntervalSeconds: (args?["metricExportIntervalSeconds"] as? Int) ?? -1,
                 offlineMaxTraceItems: (args?["offlineMaxTraceItems"] as? Int) ?? 0,
                 offlineMaxMetricItems: (args?["offlineMaxMetricItems"] as? Int) ?? 0,
-                offlineMaxLogItems: (args?["offlineMaxLogItems"] as? Int) ?? 0
+                offlineMaxLogItems: (args?["offlineMaxLogItems"] as? Int) ?? 0,
+                firstPartyHosts: (args?["firstPartyHosts"] as? [String]) ?? [],
+                debugLogging: (args?["debugLogging"] as? Bool) ?? false
             )
             result(true)
 
