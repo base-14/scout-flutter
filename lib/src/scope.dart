@@ -13,4 +13,4 @@ const String kScopeName = 'base14.scout.flutter';
 /// Must always equal the `version:` in pubspec.yaml — backends read the
 /// scope version to know which SDK version an app runs. Guarded by
 /// `test/scope_version_sync_test.dart`.
-const String kScopeVersion = '0.1.24';
+const String kScopeVersion = '0.2.0';

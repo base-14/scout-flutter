@@ -1,3 +1,40 @@
+## 0.2.0
+
+### Added — hybrid (native + Flutter) support via native delegation
+- **`scout_flutter` can now delegate to the native Scout SDK** in an add-to-app
+  hybrid — a native Android (Kotlin) or iOS (Swift) app that embeds Flutter.
+  The Flutter SDK forwards its spans, logs, metrics, and breadcrumbs to the
+  native side, which becomes the **single exporter**. Native and Flutter
+  telemetry then share **one `session.id`**, appearing as two instrumentation
+  scopes (`base14.scout.android` / `base14.scout.ios` + `base14.scout.flutter`)
+  under one service. Session unification works both same-process and (on
+  Android) in a separate `:flutter` process.
+- **iOS crash / app-hang are delegated to the native engine** (`Scout.startBridge`),
+  giving a hybrid iOS app native crash + ANR capture alongside Flutter instrumentation.
+- Flutter configuration is forwarded to the native side through the bridge:
+  batch/export settings (`exportIntervalSeconds`, `maxExportBatchSize`,
+  `maxQueueSize`, `maxRetries`, `metricExportIntervalSeconds`),
+  `firstPartyHosts`, `debugLogging`, and the `scout.flutter.version` resource
+  attribute.
+
+### Fixed
+- **No duplicate crash reports in hybrid mode.** When delegating, `scout_flutter`
+  now drains and discards its own crash files instead of exporting them — the
+  native SDK owns crash reporting in bridge mode, so a crash is reported once.
+
+### Changed
+- Native SDK dependencies are pinned to published releases:
+  `io.base14:scout-android:0.1.7` (Maven Central) on Android and the
+  `scout-kotlin-multiplatform` Swift Package at `ios-0.1.9` on iOS.
+  `mavenLocal()` and local-path references were removed.
+
+### Note — effect on pure-Flutter apps
+- The native delegation engine now initializes alongside the Flutter SDK on both
+  platforms. In a **pure-Flutter** app this is additive: full Flutter telemetry
+  is unchanged, and you additionally get native-level crash capture and
+  CPU/memory vitals under a native scope (`base14.scout.android` /
+  `base14.scout.ios`) next to `base14.scout.flutter`.
+
 ## 0.1.24
 
 ### Fixed

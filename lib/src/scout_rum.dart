@@ -397,7 +397,8 @@ class ScoutFlutter {
       'offlineMaxMetricItems': config.offlineMaxMetricItems,
       'offlineMaxLogItems': config.offlineMaxLogItems,
       'debugLogging': config.debugLogging,
-      if (config.firstPartyHosts != null) 'firstPartyHosts': config.firstPartyHosts,
+      if (config.firstPartyHosts != null)
+        'firstPartyHosts': config.firstPartyHosts,
     });
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
@@ -438,18 +439,18 @@ class ScoutFlutter {
             ? (_delegating
                 ? BridgeMetricExporter(kScopeName)
                 : FixedHttpMetricExporter(
-              endpoint: httpEndpoint,
-              headers: config.headers,
-              maxRetries: config.maxRetries,
-              idleTimeout: metricIdleTimeout,
-              // flutter.frame.duration is recorded per frame by the
-              // upstream flutterrific layer; when Scout's frame metrics
-              // are disabled, drop the upstream one too.
-              dropMetricNames:
-                  config.enableFrameMetrics
-                      ? const {}
-                      : const {'flutter.frame.duration'},
-            ))
+                  endpoint: httpEndpoint,
+                  headers: config.headers,
+                  maxRetries: config.maxRetries,
+                  idleTimeout: metricIdleTimeout,
+                  // flutter.frame.duration is recorded per frame by the
+                  // upstream flutterrific layer; when Scout's frame metrics
+                  // are disabled, drop the upstream one too.
+                  dropMetricNames:
+                      config.enableFrameMetrics
+                          ? const {}
+                          : const {'flutter.frame.duration'},
+                ))
             : null;
     final MetricReader? metricReader =
         metricExporter == null
