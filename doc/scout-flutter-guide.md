@@ -159,26 +159,26 @@ Attached as resource attributes to all telemetry:
 CUSTOM INSTRUMENTATION
 
 Log events
-
+```
 ScoutFlutter.logEvent('purchase_completed', attributes: {
   'item_id': 'SKU-123',
   'amount': '49.99',
 });
-
+```
 
 Time a custom operation
 
 logEvent records an instantaneous event. To measure how long an operation takes
 (or nest work under a parent), use the OpenTelemetry tracer exposed as
 ScoutFlutter.tracer:
-
+```
 final span = ScoutFlutter.tracer.startSpan('load_profile');
 try {
   await loadProfile();
 } finally {
   span.end();
 }
-
+```
 ScoutFlutter.tracer is the underlying dartastic_opentelemetry tracer, so custom
 spans are sampled and beforeSend-filtered like built-in spans, with the full
 OTel span API (attributes, status, nesting) available for advanced cases.
@@ -193,20 +193,20 @@ ScoutFlutter.addBreadcrumb('checkout', 'entered payment details');
 
 
 Report errors manually
-
+```
 try {
   await riskyOperation();
 } catch (e, stackTrace) {
   ScoutFlutter.reportError(e, stackTrace);
 }
-
+```
 
 Set user identity
 
 Attached to all subsequent spans and logs:
-
+```
 ScoutFlutter.setUser(id: 'user-456', attributes: {'email': 'jane@example.com'});
-
+```
 
 Structured logging
 
@@ -220,12 +220,12 @@ ScoutFlutter.logError('Payment gateway timeout');
 Annotate widgets
 
 For custom tap labels on widgets the SDK can't auto-label:
-
+```
 RumUserActionAnnotation(
   description: 'Add to cart',
   child: MyCustomWidget(),
 )
-
+```
 
 ────────────────────────────────────────────────
 
