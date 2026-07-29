@@ -166,6 +166,24 @@ ScoutFlutter.logEvent('purchase_completed', attributes: {
 });
 
 
+Time a custom operation
+
+logEvent records an instantaneous event. To measure how long an operation takes
+(or nest work under a parent), use the OpenTelemetry tracer exposed as
+ScoutFlutter.tracer:
+
+final span = ScoutFlutter.tracer.startSpan('load_profile');
+try {
+  await loadProfile();
+} finally {
+  span.end();
+}
+
+ScoutFlutter.tracer is the underlying dartastic_opentelemetry tracer, so custom
+spans are sampled and beforeSend-filtered like built-in spans, with the full
+OTel span API (attributes, status, nesting) available for advanced cases.
+
+
 Add breadcrumbs
 
 Breadcrumbs are attached to crash reports so you can see what the user did before a crash:
@@ -187,7 +205,7 @@ Set user identity
 
 Attached to all subsequent spans and logs:
 
-ScoutFlutter.setUser(id: 'user-456', email: 'jane@example.com');
+ScoutFlutter.setUser(id: 'user-456', attributes: {'email': 'jane@example.com'});
 
 
 Structured logging
@@ -195,7 +213,8 @@ Structured logging
 ScoutFlutter.logDebug('Cache hit for product list');
 ScoutFlutter.logInfo('User completed onboarding');
 ScoutFlutter.logWarning('Retry attempt 2 for payment API');
-ScoutFlutter.logError('Payment gateway timeout', error: e, stackTrace: st);
+ScoutFlutter.logError('Payment gateway timeout');
+// For an error with a stack trace, use ScoutFlutter.reportError(e, st) instead.
 
 
 Annotate widgets
