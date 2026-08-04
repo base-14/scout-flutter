@@ -58,6 +58,6 @@ android {
 }
 
 dependencies {
-    implementation 'io.base14:scout-android:0.1.7'
+    implementation 'io.base14:scout-android:0.1.8'
     testImplementation 'junit:junit:4.13.2'
 }

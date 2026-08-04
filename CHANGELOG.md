@@ -1,3 +1,19 @@
+## 0.2.1
+
+### Fixed
+- **`maxOfflineStorageMb` is now forwarded to the native SDK.** In hybrid/delegating
+  mode the native engine owns the offline buffer, but the Flutter config value was
+  never sent across the bridge, so a custom cap silently fell back to the native
+  default (5 MB). It is now forwarded on both Android and iOS, matching the newly
+  enforced FIFO eviction in the native SDKs.
+
+### Changed
+- Native SDK dependencies bumped to the latest published releases:
+  `io.base14:scout-android:0.1.8` (Maven Central) on Android and the
+  `scout-kotlin-multiplatform` Swift Package at `ios-0.1.10` on iOS. These ship
+  engine-owned MetricKit diagnostics and enforced `maxOfflineStorageMb` (FIFO
+  eviction of the offline buffer).
+
 ## 0.2.0
 
 ### Added — hybrid (native + Flutter) support via native delegation

@@ -48,13 +48,11 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 maxRetries: (args?["maxRetries"] as? Int) ?? 0,
                 vitalsCollectionIntervalSeconds: (args?["vitalsCollectionIntervalSeconds"] as? Int) ?? 60,
                 offlineBufferEnabled: (args?["offlineBufferEnabled"] as? Bool) ?? false,
+                maxOfflineStorageMb: (args?["maxOfflineStorageMb"] as? Int) ?? 5,
                 enableMemoryMetrics: (args?["enableMemoryMetrics"] as? Bool) ?? false,
                 enableCpuMetrics: (args?["enableCpuMetrics"] as? Bool) ?? false,
                 enableFrameMetrics: (args?["enableFrameMetrics"] as? Bool) ?? false,
                 metricExportIntervalSeconds: (args?["metricExportIntervalSeconds"] as? Int) ?? -1,
-                offlineMaxTraceItems: (args?["offlineMaxTraceItems"] as? Int) ?? 0,
-                offlineMaxMetricItems: (args?["offlineMaxMetricItems"] as? Int) ?? 0,
-                offlineMaxLogItems: (args?["offlineMaxLogItems"] as? Int) ?? 0,
                 firstPartyHosts: (args?["firstPartyHosts"] as? [String]) ?? [],
                 debugLogging: (args?["debugLogging"] as? Bool) ?? false
             )

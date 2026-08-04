@@ -10,7 +10,7 @@ let package = Package(
   dependencies: [
     .package(
       url: "https://github.com/base-14/scout-kotlin-multiplatform.git",
-      revision: "ios-0.1.9"
+      revision: "ios-0.1.10"
     )
   ],
   targets: [
