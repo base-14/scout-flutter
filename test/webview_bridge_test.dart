@@ -24,12 +24,15 @@ void main() {
       expect(js, contains('attempt < 50'));
     });
 
-    test('relay mode wires send() and asks the page to stop exporting', () async {
-      final js = await captureShim(mode: ScoutWebViewMode.relay);
-      expect(js, contains('var relay = true;'));
-      expect(js, contains('bridge.relay = true;'));
-      expect(js, contains('bridge.send = function(payload)'));
-    });
+    test(
+      'relay mode wires send() and asks the page to stop exporting',
+      () async {
+        final js = await captureShim(mode: ScoutWebViewMode.relay);
+        expect(js, contains('var relay = true;'));
+        expect(js, contains('bridge.relay = true;'));
+        expect(js, contains('bridge.send = function(payload)'));
+      },
+    );
 
     test('sessionOnly mode passes identity only — no send, no relay', () async {
       final js = await captureShim(mode: ScoutWebViewMode.sessionOnly);
@@ -69,16 +72,24 @@ void main() {
   group('injectShim — re-injection', () {
     test('keys the sentinel on the session id, not a bare boolean', () async {
       final js = await captureShim();
-      expect(js, contains('window.__SCOUT_WEBVIEW_BRIDGED === nativeSessionId'));
+      expect(
+        js,
+        contains('window.__SCOUT_WEBVIEW_BRIDGED === nativeSessionId'),
+      );
       expect(js, contains('window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;'));
       // A plain `if (flag) return` would pin the page to a stale session.
-      expect(js, isNot(contains('if (window.__SCOUT_WEBVIEW_BRIDGED) return;')));
+      expect(
+        js,
+        isNot(contains('if (window.__SCOUT_WEBVIEW_BRIDGED) return;')),
+      );
     });
 
     test('marks the sentinel only after a successful bind', () async {
       final js = await captureShim();
       final bindAt = js.indexOf('S.setWebViewBridge(bridge)');
-      final markAt = js.indexOf('window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;');
+      final markAt = js.indexOf(
+        'window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;',
+      );
       expect(bindAt, greaterThan(0));
       expect(markAt, greaterThan(bindAt));
     });
