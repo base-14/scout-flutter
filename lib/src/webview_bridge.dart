@@ -2,40 +2,103 @@ import 'dart:convert';
 
 import 'scout_rum.dart';
 
+/// How an embedded WebView's telemetry reaches the backend.
+enum ScoutWebViewMode {
+  /// The page adopts the native session + anonymous id and keeps
+  /// exporting to the collector itself.
+  ///
+  /// One copy of every signal, and the page's logs, metrics and web
+  /// vitals all survive — the relay carries spans only. Needs no
+  /// [ScoutWebViewBridge.attach] call and no JS channel; the page must
+  /// be able to reach the collector, which for a browser context means
+  /// the collector must allow CORS from the page's origin.
+  ///
+  /// Prefer this unless the WebView genuinely cannot reach the
+  /// collector.
+  sessionOnly,
+
+  /// The page stops POSTing spans and hands them to the native SDK,
+  /// which re-emits them under the native session.
+  ///
+  /// Use when the WebView cannot reach the collector directly — a
+  /// locked-down network, or a collector with no CORS allowance for the
+  /// page's origin. Requires [ScoutWebViewBridge.attach].
+  ///
+  /// Only spans travel the bridge. The page's logs and metrics keep
+  /// going out over HTTP, so they still need collector reachability;
+  /// if the page truly has no network path, they are lost.
+  ///
+  /// Requires `@base14/scout-react` **0.1.16+** on the page. Older
+  /// versions ignore the relay flag and *mirror* instead: the span is
+  /// exported by the page **and** re-emitted natively, so it lands in
+  /// the backend twice.
+  relay,
+}
+
 /// Bridges an embedded WebView's RUM session to the native Scout
 /// session so a single user-flow produces one unified session
 /// instead of two disconnected ones.
 ///
 /// **How it works**
-/// 1. We register a JavaScript channel (`ScoutBridge` by default) the
-///    page can `postMessage` into.
-/// 2. We inject a small JS shim that polls for the page's web SDK
+/// 1. We inject a small JS shim that polls for the page's web SDK
 ///    (`window.Scout`) and calls its `setWebViewBridge(...)` hook with
-///    the native session_id + anonymous_id + a `send` function that
-///    routes spans back through the channel.
-/// 3. The web SDK stops POSTing to its own OTLP endpoint and instead
-///    hands every span to `send` — which arrives here as a
-///    `JavaScriptMessage`. We re-emit it as a proper OTel span under
-///    the native session, with `span.source = "webview"` so backends
-///    can tell where it came from.
+///    the native session_id + anonymous_id.
+/// 2. In [ScoutWebViewMode.relay] we also register a JavaScript channel
+///    (`ScoutBridge` by default) and pass the page a `send` function
+///    that routes spans back through it. Each arriving span is
+///    re-emitted as a proper OTel span under the native session, with
+///    `span.source = "webview"` so backends can tell where it came
+///    from.
 ///
 /// **What the embedded page needs**
-/// - Be instrumented with `@base14/scout-react` v0.2.0+ on the web
-///   entry. That SDK version ships `Scout.setWebViewBridge(...)`.
-/// - Have JavaScript enabled in the WebView (`JavaScriptMode
-///   .unrestricted` for `webview_flutter`).
+/// - To be instrumented with `@base14/scout-react` **0.1.6+** on the web
+///   entry (that is the first published version shipping
+///   `Scout.setWebViewBridge(...)`). [ScoutWebViewMode.relay] wants
+///   **0.1.16+** — see the enum for what older versions do instead.
+/// - JavaScript enabled in the WebView.
 ///
-/// **Example with `webview_flutter`** (works the same way for
-/// `flutter_inappwebview` — just adapt the controller calls):
+/// **Example — `flutter_inappwebview`, session-only (recommended)**
 /// ```dart
-/// import 'package:webview_flutter/webview_flutter.dart';
-/// import 'package:scout_flutter/scout_flutter.dart';
+/// InAppWebView(
+///   initialSettings: InAppWebViewSettings(javaScriptEnabled: true),
+///   onLoadStop: (controller, url) async {
+///     await ScoutWebViewBridge.injectShim(
+///       runJavaScript: (js) => controller.evaluateJavascript(source: js),
+///     );
+///   },
+/// );
+/// ```
 ///
+/// **Example — `flutter_inappwebview`, relay**
+/// ```dart
+/// InAppWebView(
+///   onWebViewCreated: (controller) {
+///     ScoutWebViewBridge.attach(
+///       addJavaScriptChannel: (name, onMessage) {
+///         controller.addJavaScriptHandler(
+///           handlerName: name,
+///           callback: (args) {
+///             if (args.isNotEmpty) onMessage(args.first.toString());
+///           },
+///         );
+///       },
+///     );
+///   },
+///   onLoadStop: (controller, url) async {
+///     await ScoutWebViewBridge.injectShim(
+///       runJavaScript: (js) => controller.evaluateJavascript(source: js),
+///       mode: ScoutWebViewMode.relay,
+///     );
+///   },
+/// );
+/// ```
+///
+/// **Example — `webview_flutter`, relay**
+/// ```dart
 /// final controller = WebViewController()
 ///   ..setJavaScriptMode(JavaScriptMode.unrestricted);
 ///
-/// await ScoutWebViewBridge.attach(
-///   runJavaScript: controller.runJavaScript,
+/// ScoutWebViewBridge.attach(
 ///   addJavaScriptChannel: (name, onMessage) {
 ///     controller.addJavaScriptChannel(
 ///       name,
@@ -44,25 +107,38 @@ import 'scout_rum.dart';
 ///   },
 /// );
 ///
-/// await controller.loadRequest(Uri.parse('https://app.example.com'));
+/// controller.setNavigationDelegate(
+///   NavigationDelegate(
+///     onPageFinished: (_) => ScoutWebViewBridge.injectShim(
+///       runJavaScript: controller.runJavaScript,
+///       mode: ScoutWebViewMode.relay,
+///     ),
+///   ),
+/// );
 /// ```
 ///
-/// The bridge is one-way (web → native). Native spans don't propagate
-/// into the web SDK — they don't need to, since the web SDK no longer
-/// has its own exporter once the bridge is wired.
+/// The bridge is one-way (web → native) and carries telemetry only.
+/// Native spans do not propagate into the web SDK, and identity beyond
+/// session_id / anonymous_id (user id, feature flags, the current
+/// screen) is not synchronised — push those over your own channel.
 class ScoutWebViewBridge {
   static const String _defaultChannelName = 'ScoutBridge';
 
-  /// Register the bridge's JS channel. Call once per WebView, before
-  /// the first page load. The channel name survives navigations, but
-  /// the JS shim itself does NOT — call [injectShim] from your
-  /// WebView's "page finished loading" callback so a fresh shim runs
-  /// after every navigation.
+  /// Register the bridge's JS channel. Required for
+  /// [ScoutWebViewMode.relay] and unused by
+  /// [ScoutWebViewMode.sessionOnly].
   ///
-  /// [addJavaScriptChannel] registers a channel the page can
-  /// `postMessage` into. The callback receives the raw message string.
+  /// Call once per WebView, before the first page load. The channel
+  /// survives navigations, but the JS shim itself does NOT — call
+  /// [injectShim] from your WebView's "page finished loading" callback
+  /// so a fresh shim runs after every navigation.
+  ///
+  /// [addJavaScriptChannel] registers a channel the page can post into.
+  /// The callback receives the raw message string. See the class docs
+  /// for how this maps onto `webview_flutter` and
+  /// `flutter_inappwebview`.
   /// [channelName] overrides the bridge channel name (default
-  /// `ScoutBridge`). Match this on the web SDK side if you change it.
+  /// `ScoutBridge`); pass the same value to [injectShim].
   static void attach({
     required void Function(
       String channelName,
@@ -75,13 +151,22 @@ class ScoutWebViewBridge {
   }
 
   /// Inject the JS shim into the currently-loaded page. Call this from
-  /// your WebView plugin's "page finished" / "onLoad" / "didFinish"
+  /// your WebView plugin's "page finished" / `onLoadStop` / "didFinish"
   /// callback — the shim only lives as long as the page does, so each
-  /// navigation needs a fresh inject. Idempotent within a single page
-  /// (the shim sets a sentinel).
+  /// navigation needs a fresh inject.
+  ///
+  /// Cheap to call repeatedly: the shim re-binds only when the native
+  /// session id has changed since the last inject, so you can also call
+  /// it on app resume to re-sync after a session rotation.
+  ///
+  /// [mode] selects who delivers the page's spans — see
+  /// [ScoutWebViewMode]. Defaults to [ScoutWebViewMode.relay] for
+  /// backwards compatibility; [ScoutWebViewMode.sessionOnly] is the
+  /// better choice whenever the WebView can reach the collector.
   static Future<void> injectShim({
     required Future<void> Function(String js) runJavaScript,
     String channelName = _defaultChannelName,
+    ScoutWebViewMode mode = ScoutWebViewMode.relay,
   }) async {
     final sessionId = ScoutFlutter.sessionId ?? '';
     final anonymousId = ScoutFlutter.anonymousId ?? '';
@@ -89,6 +174,7 @@ class ScoutWebViewBridge {
       channelName: channelName,
       sessionId: sessionId,
       anonymousId: anonymousId,
+      mode: mode,
     );
     try {
       await runJavaScript(shim);
@@ -134,6 +220,17 @@ class ScoutWebViewBridge {
       }
       attrs['span.source'] = 'webview';
 
+      // The span's own start/end are stamped when we re-emit, which is
+      // when the message crossed the channel — the tracer gives us no
+      // way to backdate a span. Carry the page's own clock reading as
+      // an attribute so the real event time survives the hop; the gap
+      // between the two is bridge latency, normally milliseconds but
+      // seconds when a backgrounded WebView is throttled.
+      final ts = decoded['timestamp_ms'];
+      if (ts is num) {
+        attrs['webview.timestamp_ms'] = ts;
+      }
+
       ScoutFlutter.emitBridgedSpan(type, attrs);
     } catch (_) {
       // Discard malformed payloads — never propagate back.
@@ -141,42 +238,70 @@ class ScoutWebViewBridge {
   }
 
   /// JS shim injected into the WebView. Polls for the page's web SDK
-  /// (`window.Scout`) every 100 ms up to 50 attempts (~5 s), then
-  /// gives up quietly. Idempotent — checks a sentinel so reloads or
-  /// repeat `attach()` calls don't double-bridge.
+  /// (`window.Scout`) every 100 ms up to 50 attempts (~5 s), then gives
+  /// up quietly.
+  ///
+  /// Re-injection is idempotent per native session: the sentinel stores
+  /// the session id the page was bound to, so injecting again with the
+  /// same session does nothing while a rotated session re-binds. A
+  /// plain boolean sentinel would leave the page pinned to a stale
+  /// session for the rest of its life.
+  ///
+  /// The `send` transport is detected at runtime rather than
+  /// configured, because the two common Flutter WebView plugins expose
+  /// channels differently: `webview_flutter` defines
+  /// `window.<channel>.postMessage`, `flutter_inappwebview` routes
+  /// through `window.flutter_inappwebview.callHandler(<channel>, ...)`.
+  /// In relay mode we wait for a transport before binding, so the page
+  /// never has its exporter switched off with nowhere to send.
   static String _buildShim({
     required String channelName,
     required String sessionId,
     required String anonymousId,
+    required ScoutWebViewMode mode,
   }) {
     // jsonEncode handles quoting / escaping safely.
     final encSession = jsonEncode(sessionId);
     final encAnon = jsonEncode(anonymousId);
     final encChannel = jsonEncode(channelName);
+    final relay = mode == ScoutWebViewMode.relay;
     return '''
 (function() {
-  if (window.__SCOUT_WEBVIEW_BRIDGED) return;
-  window.__SCOUT_WEBVIEW_BRIDGED = true;
   var nativeSessionId = $encSession;
   var nativeAnonymousId = $encAnon;
   var channelName = $encChannel;
-  function send(payload) {
-    try {
-      var ch = window[channelName];
-      if (ch && typeof ch.postMessage === 'function') {
-        ch.postMessage(typeof payload === 'string' ? payload : JSON.stringify(payload));
-      }
-    } catch (_) {}
+  var relay = $relay;
+  if (window.__SCOUT_WEBVIEW_BRIDGED === nativeSessionId) return;
+  function transport() {
+    var ch = window[channelName];
+    if (ch && typeof ch.postMessage === 'function') {
+      return function(msg) { ch.postMessage(msg); };
+    }
+    var iaw = window.flutter_inappwebview;
+    if (iaw && typeof iaw.callHandler === 'function') {
+      return function(msg) { iaw.callHandler(channelName, msg); };
+    }
+    return null;
   }
   function bind(attempt) {
     var S = window.Scout || window.scout;
-    if (S && typeof S.setWebViewBridge === 'function') {
+    var post = relay ? transport() : null;
+    if (S && typeof S.setWebViewBridge === 'function' && (!relay || post)) {
+      var bridge = {
+        sessionId: nativeSessionId,
+        anonymousId: nativeAnonymousId,
+      };
+      if (relay) {
+        bridge.relay = true;
+        bridge.send = function(payload) {
+          try {
+            post(typeof payload === 'string' ? payload : JSON.stringify(payload));
+          } catch (_) {}
+        };
+      }
       try {
-        S.setWebViewBridge({
-          sessionId: nativeSessionId,
-          anonymousId: nativeAnonymousId,
-          send: send,
-        });
+        S.setWebViewBridge(bridge);
+        window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;
       } catch (_) {}
       return;
     }

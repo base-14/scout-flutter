@@ -1,3 +1,48 @@
+## 0.2.2
+
+### Added
+- **`flutter_inappwebview` support in the WebView bridge.** The injected shim
+  posted only through `window.<channel>.postMessage`, which is `webview_flutter`'s
+  channel shape. `flutter_inappwebview` routes JS→Dart through
+  `window.flutter_inappwebview.callHandler(...)` instead, so the bridge silently
+  delivered nothing on that plugin despite the docs claiming it "works the same
+  way". The shim now detects either transport at runtime, and in relay mode waits
+  for one to exist before binding — so the page is never told to stop exporting
+  while it has nowhere to send.
+- **`ScoutWebViewMode`** selects who delivers the embedded page's spans:
+  - `sessionOnly` — the page adopts the native session and keeps exporting to the
+    collector itself. One copy of every signal, and the page's logs, metrics and
+    web vitals survive (the relay carries spans only). Recommended whenever the
+    WebView can reach the collector.
+  - `relay` (default, unchanged behaviour) — the page hands its spans to the
+    native SDK. Requires `@base14/scout-react` 0.1.16+; older versions ignore the
+    relay flag and export the span themselves *as well*, landing it in the backend
+    twice.
+
+### Fixed
+- **Re-injecting the shim after a session rotation now re-syncs.** The sentinel
+  was a bare boolean, so the first inject latched it and every later inject
+  returned early — a page that outlived a native session rotation stayed pinned to
+  the stale session id for the rest of its life. The sentinel now stores the
+  session id it bound to, making re-injection idempotent per session rather than
+  per page. `injectShim` is now cheap to call on app resume as well as page load.
+- **The page's own event timestamp is no longer discarded.** Bridged spans are
+  stamped when the message crosses the channel (the tracer offers no way to
+  backdate a span), so the page's `timestamp_ms` is now carried through as
+  `webview.timestamp_ms`. The gap between the two is bridge latency — milliseconds
+  normally, seconds when a backgrounded WebView is throttled.
+- **Corrected the bridge documentation.** It claimed `@base14/scout-react` v0.2.0+
+  was required; no such version exists — `setWebViewBridge` has shipped since
+  0.1.6. It also claimed the page "stops POSTing to its own OTLP endpoint" once
+  bridged, which was never true: the page exported *and* forwarded, duplicating
+  every bridged span. That is now accurate for `relay` mode against scout-react
+  0.1.16+, and the tradeoffs of each mode are documented.
+
+### Added — tests
+- First test coverage for the WebView bridge (15 tests): shim shape per mode,
+  transport detection for both WebView plugins, session-keyed re-injection, and
+  malformed-payload resilience on the inbound channel.
+
 ## 0.2.1
 
 ### Fixed
