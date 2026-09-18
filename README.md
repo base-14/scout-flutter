@@ -18,7 +18,7 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 | Lifecycle | `app_paused`, `app_resumed` | Background/foreground transitions |
 | Errors | `error.count` metric | FlutterError + uncaught async exceptions |
 | Device info | Resource attributes | Model, manufacturer, battery level, battery discharge rate, orientation, connectivity |
-| App startup | `app_startup` | Cold start and warm start duration |
+| App startup | `app_startup` | Cold start (OS process start → first frame) and warm start (resume → next frame); `app_startup.duration` seconds, `app_startup.duration_ms` milliseconds |
 | Long tasks | `long_task` | Main isolate jank detection (configurable threshold) |
 | ANR | `anr` | Native watchdog detects unresponsive main thread; captures full thread dump and breadcrumbs |
 | Frame metrics | `flutter.frame.build_time`, `flutter.frame.raster_time` | Per-frame build and raster histograms — opt-in via `enableFrameMetrics` (default off; records every frame, one stream per screen) |

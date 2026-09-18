@@ -116,6 +116,13 @@ class ScoutFlutterConfig {
   final int iosHangThresholdMs;
 
   /// Whether to track app startup time (cold and warm start).
+  ///
+  /// Cold start is measured from the OS process start to the app's first
+  /// rendered frame — call [ScoutFlutter.initialize] before `runApp()` so
+  /// the first-frame anchor is the real first frame. Where the OS start
+  /// time is unavailable it falls back to `initialize()` → first frame
+  /// (`app_startup.anchor` = `sdk_init`). Warm start is resume → next
+  /// rendered frame.
   final bool enableStartupTracking;
 
   /// Whether to track network connectivity type as a resource attribute.

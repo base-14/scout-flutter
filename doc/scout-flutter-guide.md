@@ -99,7 +99,7 @@ Performance
 
 | What | Span / Metric Name | Details |
 |------|-------------------|---------|
-| App startup time | app_startup | Cold start and warm start duration in milliseconds |
+| App startup time | app_startup | `app_startup.type` cold/warm. Cold = OS process start → first rendered frame (falls back to `ScoutFlutter.initialize()` → first frame where the OS start time is unavailable; `app_startup.anchor` says which). Warm = resume → next rendered frame. `app_startup.duration` is in **seconds**, `app_startup.duration_ms` in milliseconds |
 | Screen load time | screen_load | Time from navigation push to first frame rendered (requires navigator observer) |
 | Long tasks (jank) | long_task | Detects when Dart main isolate is blocked beyond threshold (default: 100ms) |
 | ANR (App Not Responding) | anr | Native watchdog thread detects unresponsive main thread (default: 5s threshold) |

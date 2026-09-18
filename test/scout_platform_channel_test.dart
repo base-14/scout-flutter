@@ -29,6 +29,55 @@ void main() {
   });
 
   group('ScoutPlatformChannel', () {
+    group('getProcessStartTimeMillis', () {
+      test('returns the epoch ms the platform reports', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              expect(call.method, 'getProcessStartTimeMillis');
+              return 1700000000000;
+            });
+        expect(
+          await ScoutPlatformChannel.getProcessStartTimeMillis(),
+          1700000000000,
+        );
+      });
+
+      test('accepts a double from the platform', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              return 1.7e12;
+            });
+        expect(
+          await ScoutPlatformChannel.getProcessStartTimeMillis(),
+          1700000000000,
+        );
+      });
+
+      test('returns null when the platform returns null', () async {
+        expect(await ScoutPlatformChannel.getProcessStartTimeMillis(), isNull);
+      });
+
+      test('returns null for a non-positive value', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async => 0);
+        expect(await ScoutPlatformChannel.getProcessStartTimeMillis(), isNull);
+      });
+
+      test('returns null when the platform throws', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              throw PlatformException(code: 'unavailable');
+            });
+        expect(await ScoutPlatformChannel.getProcessStartTimeMillis(), isNull);
+      });
+
+      test('returns null when no plugin is registered', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+        expect(await ScoutPlatformChannel.getProcessStartTimeMillis(), isNull);
+      });
+    });
+
     test('startAnrDetection sends correct method and args', () async {
       await ScoutPlatformChannel.startAnrDetection(thresholdMs: 3000);
 

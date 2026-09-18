@@ -171,7 +171,26 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "getBatteryDischargeRate" -> {
                 result.success(batteryDischargeRate())
             }
+            "getProcessStartTimeMillis" -> {
+                result.success(processStartTimeMillis())
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    /// Epoch ms at which the OS forked this process, or null when unknown.
+    /// Process age is computed on the elapsedRealtime timebase (which keeps
+    /// counting through deep sleep, unlike uptimeMillis) and subtracted from
+    /// the current wall clock, so a wrong clock at boot cannot skew it.
+    /// API 24+ only — earlier releases expose no process start time.
+    private fun processStartTimeMillis(): Long? {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return null
+            val ageMs = android.os.SystemClock.elapsedRealtime() -
+                android.os.Process.getStartElapsedRealtime()
+            if (ageMs < 0) null else System.currentTimeMillis() - ageMs
+        } catch (_: Throwable) {
+            null
         }
     }
 
