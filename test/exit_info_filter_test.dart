@@ -200,7 +200,9 @@ void main() {
         'crash.previous_session_id': 'sess-prev',
       });
       expect(exitAttrs.keys.where((k) => k.startsWith('crash.')), isEmpty);
-      expect(exitAttrs['exit.type'], 'low_memory');
+      expect(exitAttrs['exit.reason'], 'low_memory');
+      expect(exitAttrs['exit.description'], 'low memory');
+      expect(exitAttrs['exit.timestamp'], '2026-09-19T13:54:14.244Z');
       expect(exitAttrs['exit.importance'], 400);
       expect(exitAttrs['exit.previous_session_id'], 'sess-prev');
       expect(exitAttrs['session.id'], 'sess-prev');

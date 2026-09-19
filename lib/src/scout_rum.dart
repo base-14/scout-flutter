@@ -1545,14 +1545,19 @@ class ScoutFlutter {
     };
   }
 
-  /// `crash.*` → `exit.*` for the `app_exit` span shape.
+  /// `crash.*` → `exit.*` for the `app_exit` span shape. The OS reason
+  /// name (`low_memory`) becomes `exit.reason` and the OS description
+  /// becomes `exit.description`; every other `crash.<k>` keeps its key
+  /// under the `exit.` prefix.
   @visibleForTesting
   static Map<String, Object> asAppExitAttributes(Map<String, Object> attrs) {
-    return {
-      for (final e in attrs.entries)
-        (e.key.startsWith('crash.') ? 'exit.${e.key.substring(6)}' : e.key):
-            e.value,
-    };
+    String rename(String k) {
+      if (k == 'crash.type') return 'exit.reason';
+      if (k == 'crash.reason') return 'exit.description';
+      return k.startsWith('crash.') ? 'exit.${k.substring(6)}' : k;
+    }
+
+    return {for (final e in attrs.entries) rename(e.key): e.value};
   }
 
   /// Highest death timestamp in [records]; 0 when none carry one.
