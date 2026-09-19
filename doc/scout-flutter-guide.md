@@ -66,8 +66,9 @@ Crashes
 |------|-----------|--------------|
 | Native crashes (SIGSEGV, SIGABRT, etc.) | native_crash | Signal handler on Android, KSCrash on iOS. Captures full stack trace, registers, memory map. Reported on next app launch. |
 | JVM/NSException crashes | native_crash | Uncaught JVM exceptions (Android) and NSExceptions (iOS). Written to disk, reported on next launch. |
-| OOM / SIGKILL / exit() crashes | app_crash | Session marker file detects abnormal termination. Reported on next launch with breadcrumb trail. |
-| Android OS post-mortems | native_crash | ApplicationExitInfo records drained on launch. Only crash-class reasons are reported (anr, jvm_crash, native_crash, low_memory) — normal exits (user swiped the app away, Force Stop, exit()) are never counted as crashes. Each record is reported exactly once; a persisted watermark prevents re-reporting on later launches. |
+| Unclean exits | app_crash | Session marker file detects a session that was never paused before the process died. On Android 11+ the OS exit record for that pid confirms it (crash-class reason, facts merged onto the span, crash.source=exit_info) or overrules it (benign reason: low-memory reclaim, swipe from recents, Force Stop, exit()). Without an OS record the marker decides (crash.source=session_marker). Reported on next launch with breadcrumb trail. |
+| Android OS post-mortems | native_crash | ApplicationExitInfo records drained on launch. Only crash-class reasons are reported (anr, jvm_crash, native_crash) — normal exits (user swiped the app away, Force Stop, exit()) are never counted as crashes. Each record is reported exactly once; a persisted watermark prevents re-reporting on later launches, and the first launch without a watermark reports nothing (that history predates the SDK). A record is attributed to the session whose process died (pid match); older records carry no session.id and are excluded from crash-free rates. |
+| Android low-memory kills | app_exit | ApplicationExitInfo REASON_LOW_MEMORY: the OS reclaimed a (usually cached, background) process. Emitted as exit.reason=low_memory with exit.importance, exit.pss_kb etc. for diagnostics. Never counted as a crash — matches Play Console and Crashlytics. |
 
 Crash spans include:
 - crash.type — mach, signal, nsexception, jvm_exception, jvm_crash, anr, etc.

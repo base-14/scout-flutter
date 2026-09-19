@@ -14,6 +14,13 @@ class CrashDetector {
   File get _markerFile => File('${_directory.path}/$_markerFileName');
   File get _breadcrumbFile => File('${_directory.path}/$_breadcrumbFileName');
 
+  /// Snapshot of the previous launch's session marker, populated by
+  /// [checkPreviousCrash] whether or not that session counted as a crash.
+  /// Lets the exit-info drain attribute an OS post-mortem to the session
+  /// that actually died (matched by pid) instead of the one that just
+  /// started, and lets the marker heuristic be checked against the OS.
+  PreviousSession? previousSession;
+
   /// Checks for a crash from the previous session.
   ///
   /// Returns a [CrashReport] if the previous session did not exit cleanly,
@@ -26,6 +33,19 @@ class CrashDetector {
       final content = await file.readAsString();
       final data = json.decode(content) as Map<String, dynamic>;
       final status = data['status'] as String?;
+      final lastActiveMs = data['last_active_at'] as int?;
+      previousSession = PreviousSession(
+        sessionId: data['session_id'] as String? ?? 'unknown',
+        startedAt: DateTime.fromMillisecondsSinceEpoch(
+          data['started_at'] as int? ?? 0,
+        ),
+        lastActiveAt:
+            lastActiveMs != null
+                ? DateTime.fromMillisecondsSinceEpoch(lastActiveMs)
+                : null,
+        pid: data['pid'] as int?,
+        status: status ?? 'unknown',
+      );
 
       // "paused" means the app went to background normally — not a crash
       // from the Dart side's perspective. We delete the marker but KEEP
@@ -47,18 +67,14 @@ class CrashDetector {
         }
       } catch (_) {}
 
-      final lastActiveMs = data['last_active_at'] as int?;
+      final prev = previousSession!;
       final report = CrashReport(
-        sessionId: data['session_id'] as String? ?? 'unknown',
-        startedAt: DateTime.fromMillisecondsSinceEpoch(
-          data['started_at'] as int? ?? 0,
-        ),
-        lastActiveAt:
-            lastActiveMs != null
-                ? DateTime.fromMillisecondsSinceEpoch(lastActiveMs)
-                : null,
+        sessionId: prev.sessionId,
+        startedAt: prev.startedAt,
+        lastActiveAt: prev.lastActiveAt,
         lastScreen: data['last_screen'] as String?,
-        status: status ?? 'unknown',
+        status: prev.status,
+        pid: prev.pid,
         breadcrumbs: breadcrumbs,
       );
 
@@ -74,9 +90,15 @@ class CrashDetector {
   }
 
   /// Writes a new session marker indicating the app is running.
+  ///
+  /// [processId] defaults to this process's pid. It is what lets the next
+  /// launch match this session against the OS's `ApplicationExitInfo`
+  /// record for the death (Android 11+), so a background kill is not
+  /// mistaken for a crash and a real crash is attributed to this session.
   Future<void> markSessionStarted({
     required String sessionId,
     String? screen,
+    int? processId,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _write({
@@ -84,6 +106,7 @@ class CrashDetector {
       'started_at': now,
       'last_active_at': now,
       'status': 'started',
+      'pid': processId ?? pid,
       if (screen != null) 'last_screen': screen,
     });
   }
@@ -168,6 +191,9 @@ class CrashReport {
   final DateTime? lastActiveAt;
   final String? lastScreen;
   final String status;
+
+  /// pid of the process that wrote the marker, when the marker recorded it.
+  final int? pid;
   final String? breadcrumbs;
 
   CrashReport({
@@ -176,6 +202,53 @@ class CrashReport {
     this.lastActiveAt,
     this.lastScreen,
     required this.status,
+    this.pid,
     this.breadcrumbs,
   });
+}
+
+/// The previous launch's session marker, independent of the crash verdict.
+class PreviousSession {
+  final String sessionId;
+  final DateTime startedAt;
+  final DateTime? lastActiveAt;
+  final int? pid;
+
+  /// `started` (never paused before the process died) or `paused`.
+  final String status;
+
+  const PreviousSession({
+    required this.sessionId,
+    required this.startedAt,
+    this.lastActiveAt,
+    this.pid,
+    required this.status,
+  });
+}
+
+/// Outcome of checking the session-marker crash heuristic against the OS
+/// exit record for the same pid (Android 11+ `ApplicationExitInfo`).
+class AppCrashVerdict {
+  /// Whether an `app_crash` span should be emitted for the previous session.
+  final bool emitAppCrash;
+
+  /// The exit-info record for the previous process, when one was found.
+  final Map<String, dynamic>? record;
+
+  const AppCrashVerdict._(this.emitAppCrash, this.record);
+
+  /// No OS evidence either way (API < 30, iOS, record rolled out of the
+  /// 16-entry buffer) — keep the marker heuristic.
+  static const heuristic = AppCrashVerdict._(true, null);
+
+  /// The OS confirms a crash-class death for that pid.
+  const AppCrashVerdict.confirmed(Map<String, dynamic> record)
+    : this._(true, record);
+
+  /// The OS says the death was benign (low-memory reclaim, swipe from
+  /// recents, Force Stop, exit()) — the marker heuristic was wrong.
+  const AppCrashVerdict.benign(Map<String, dynamic> record)
+    : this._(false, record);
+
+  bool get confirmedByOs => emitAppCrash && record != null;
 }

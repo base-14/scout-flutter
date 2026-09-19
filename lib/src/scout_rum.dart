@@ -62,6 +62,10 @@ class ScoutFlutter {
   // Holds breadcrumbs.json content from the crashed session so the
   // native_crash drain path can attach them. Cleared after drain.
   static String? _previousSessionBreadcrumbs;
+
+  /// Exit-info pids already reported as `app_crash` on this launch, so the
+  /// drain does not emit a second `native_crash` for the same death.
+  static final Set<int> _consumedExitInfoPids = <int>{};
   static Map<String, Object> _userAttributes = {};
   static Map<String, Object> _sessionAttributes = {};
   static GlobalTapDetector? _tapDetector;
@@ -566,11 +570,27 @@ class ScoutFlutter {
     );
 
     // Crash detection — check previous session before writing new marker.
+    // On Android 11+ the OS keeps an authoritative record of why the
+    // previous process died (ApplicationExitInfo). Pull it first so the
+    // marker heuristic below is confirmed or overruled by pid instead of
+    // reporting every unclean marker — including background kills — as a
+    // crash. The same list feeds the post-mortem drain further down.
+    List<Map<String, dynamic>> exitInfoRecords = const [];
+    if (!_delegating) {
+      try {
+        exitInfoRecords = await ScoutPlatformChannel.getExitInfoReports(
+          maxTombstoneBytes: config.maxTombstoneBytes,
+        );
+      } catch (_) {}
+    }
     try {
       final previousCrash =
           _delegating ? null : await _crashDetector?.checkPreviousCrash();
       if (previousCrash != null) {
         _previousSessionBreadcrumbs = previousCrash.breadcrumbs;
+      }
+      final verdict = reconcileAppCrash(previousCrash?.pid, exitInfoRecords);
+      if (previousCrash != null && verdict.emitAppCrash) {
         // Extract error details from breadcrumbs for a self-contained crash span.
         String? lastErrorType;
         String? lastErrorMessage;
@@ -598,14 +618,21 @@ class ScoutFlutter {
 
         // Use the CRASHED session's ID and timestamp, not the new session.
         final crashTime = previousCrash.lastActiveAt ?? previousCrash.startedAt;
+        final osRecord = verdict.record;
+        final osPid = osRecord?['crash_pid'];
+        if (osPid is int) _consumedExitInfoPids.add(osPid);
         _emitSpan('app_crash', {
           'session.id': previousCrash.sessionId,
           'session.start_time':
               previousCrash.startedAt.toUtc().toIso8601String(),
           'crash.previous_session_id': previousCrash.sessionId,
-          'crash.started_at': previousCrash.startedAt.toIso8601String(),
-          'crash.timestamp': crashTime.toIso8601String(),
+          'crash.started_at': previousCrash.startedAt.toUtc().toIso8601String(),
+          'crash.timestamp': crashTime.toUtc().toIso8601String(),
           'crash.status': previousCrash.status,
+          'crash.source': osRecord != null ? 'exit_info' : 'session_marker',
+          // OS facts for the same death (type, reason, exit status, pss/rss,
+          // tombstone) — overrides crash.timestamp with the kernel's.
+          if (osRecord != null) ...flattenCrashRecord(osRecord),
           if (previousCrash.lastScreen != null)
             'crash.last_screen': previousCrash.lastScreen!,
           if (lastErrorType != null) 'error.type': lastErrorType,
@@ -620,6 +647,7 @@ class ScoutFlutter {
       }
       await _crashDetector?.markSessionStarted(
         sessionId: _sessionManager!.sessionId,
+        processId: pid,
       );
     } catch (_) {}
 
@@ -634,7 +662,7 @@ class ScoutFlutter {
     // All three feed the same `native_crash` span shape so the
     // backend doesn't need to branch on source.
     if (!_delegating) {
-      await _drainCrashReports();
+      await _drainCrashReports(exitInfoRecords: exitInfoRecords);
     } else {
       await _discardDelegatedCrashReports();
     }
@@ -1437,30 +1465,94 @@ class ScoutFlutter {
   /// history is a normal way for a process to stop — `user_requested`
   /// (swiped from recents / "Close app" on the ANR dialog),
   /// `user_stopped` (Force Stop), `exit_self`, etc. — and must not be
-  /// reported as a crash.
+  /// reported as a crash. `low_memory` is not a crash either: the OS
+  /// reclaimed a (usually cached, background) process to free memory.
+  /// Play Console and Crashlytics don't count it, so neither do we — it
+  /// goes out as an `app_exit` span instead (see [isReportedExitInfo]).
   @visibleForTesting
-  static bool isCrashClassExitInfo(String? crashType) => const {
-    'anr',
-    'jvm_crash',
-    'native_crash',
-    'low_memory',
-  }.contains(crashType);
+  static bool isCrashClassExitInfo(String? crashType) =>
+      const {'anr', 'jvm_crash', 'native_crash'}.contains(crashType);
+
+  /// Benign exit reasons still worth an `app_exit` span for diagnostics
+  /// (visible in session timelines, never counted as a crash).
+  @visibleForTesting
+  static bool isReportedExitInfo(String? crashType) =>
+      crashType == 'low_memory';
 
   /// ApplicationExitInfo history is not consumed on read — the OS keeps
   /// up to 16 records for days — so each drain must only emit records
   /// newer than the last drained death timestamp, or every launch
-  /// re-reports the same deaths.
+  /// re-reports the same deaths. With no watermark at all (first launch
+  /// after install or after upgrading to an SDK that keeps one) the whole
+  /// history predates the SDK, so nothing is emitted: those deaths cannot
+  /// be attributed to any session we know about, and dumping up to 16 of
+  /// them into the session that just started made it look crashed.
   @visibleForTesting
   static List<Map<String, dynamic>> selectNewExitInfoRecords(
     List<Map<String, dynamic>> records,
     int? watermarkMs,
   ) {
-    if (watermarkMs == null) return List.of(records);
+    if (watermarkMs == null) return const [];
     return records
         .where(
           (r) => ((r['crash_death_timestamp_ms'] as int?) ?? 0) > watermarkMs,
         )
         .toList();
+  }
+
+  /// Check the session-marker crash heuristic against the OS exit record
+  /// for the previous process. The marker says "crash" whenever the app
+  /// was never paused before the process died — which is also what a
+  /// low-memory kill, a swipe from recents or a Force Stop look like.
+  /// When Android 11+ has a record for [markerPid], the OS reason wins.
+  @visibleForTesting
+  static AppCrashVerdict reconcileAppCrash(
+    int? markerPid,
+    List<Map<String, dynamic>> exitInfo,
+  ) {
+    if (markerPid == null || exitInfo.isEmpty) {
+      return AppCrashVerdict.heuristic;
+    }
+    for (final r in exitInfo) {
+      if (r['crash_pid'] != markerPid) continue;
+      return isCrashClassExitInfo(r['crash_type'] as String?)
+          ? AppCrashVerdict.confirmed(r)
+          : AppCrashVerdict.benign(r);
+    }
+    return AppCrashVerdict.heuristic;
+  }
+
+  /// Session attributes for an exit-info record. A record whose pid is the
+  /// process that wrote the previous session marker belongs to THAT
+  /// session; anything else (older history) is emitted without a
+  /// `session.id`, so it stays visible for diagnostics but is excluded
+  /// from every per-session crash metric.
+  @visibleForTesting
+  static Map<String, Object> exitInfoSessionAttributes(
+    Map<String, dynamic> record,
+    PreviousSession? previous,
+  ) {
+    final previousPid = previous?.pid;
+    if (previous == null ||
+        previousPid == null ||
+        record['crash_pid'] != previousPid) {
+      return const {};
+    }
+    return {
+      'session.id': previous.sessionId,
+      'session.start_time': previous.startedAt.toUtc().toIso8601String(),
+      'crash.previous_session_id': previous.sessionId,
+    };
+  }
+
+  /// `crash.*` → `exit.*` for the `app_exit` span shape.
+  @visibleForTesting
+  static Map<String, Object> asAppExitAttributes(Map<String, Object> attrs) {
+    return {
+      for (final e in attrs.entries)
+        (e.key.startsWith('crash.') ? 'exit.${e.key.substring(6)}' : e.key):
+            e.value,
+    };
   }
 
   /// Highest death timestamp in [records]; 0 when none carry one.
@@ -1504,35 +1596,45 @@ class ScoutFlutter {
     } catch (_) {}
   }
 
-  static Future<void> _drainCrashReports() async {
+  static Future<void> _drainCrashReports({
+    List<Map<String, dynamic>>? exitInfoRecords,
+  }) async {
     final drainStart = DateTime.now().toUtc();
     final sources = <Future<List<Map<String, dynamic>>>>[
       ScoutPlatformChannel.getNativeCrashReports(),
       ScoutPlatformChannel.getMetricKitReports(),
-      ScoutPlatformChannel.getExitInfoReports(
-        maxTombstoneBytes: _config?.maxTombstoneBytes ?? 131072,
-      ),
+      exitInfoRecords != null
+          ? Future.value(exitInfoRecords)
+          : ScoutPlatformChannel.getExitInfoReports(
+            maxTombstoneBytes: _config?.maxTombstoneBytes ?? 131072,
+          ),
     ];
     final results = await Future.wait(
       sources.map((f) => f.catchError((_) => <Map<String, dynamic>>[])),
     );
 
-    // Exit-info (last source) needs both filters: benign exit reasons
-    // are not crashes, and already-drained records must not re-emit.
-    // The other sources consume their reports on read and use their own
-    // type names, so they pass through untouched.
+    // Exit-info (last source) needs its own handling: only records newer
+    // than the watermark, never a pid already reported as `app_crash` on
+    // this launch, crash-class reasons become `native_crash`, low-memory
+    // reclaims become `app_exit`, everything else is dropped. The other
+    // sources consume their reports on read and use their own type names,
+    // so they pass through untouched.
     final exitInfoAll = results.removeLast();
     final watermark = await _readExitInfoWatermark();
     final exitInfoNew =
-        selectNewExitInfoRecords(exitInfoAll, watermark)
-            .where((r) => isCrashClassExitInfo(r['crash_type'] as String?))
-            .toList();
+        selectNewExitInfoRecords(exitInfoAll, watermark).where((r) {
+          final p = r['crash_pid'];
+          if (p is int && _consumedExitInfoPids.contains(p)) return false;
+          final type = r['crash_type'] as String?;
+          return isCrashClassExitInfo(type) || isReportedExitInfo(type);
+        }).toList();
     final newWatermark = exitInfoWatermarkOf(exitInfoAll);
     if (newWatermark > (watermark ?? 0)) {
       await _writeExitInfoWatermark(newWatermark);
     }
-    results.add(exitInfoNew);
-    final totalReports = results.fold<int>(0, (sum, list) => sum + list.length);
+    final totalReports =
+        results.fold<int>(0, (sum, list) => sum + list.length) +
+        exitInfoNew.length;
     if (totalReports > 0 && _previousSessionBreadcrumbs == null) {
       _previousSessionBreadcrumbs =
           await _crashDetector?.consumeOrphanedBreadcrumbs();
@@ -1541,17 +1643,45 @@ class ScoutFlutter {
     final drainUptimeSecs =
         drainEnd.difference(drainStart).inMilliseconds / 1000.0;
     final drainState = isInitialized ? 'initialized' : 'initializing';
+    void stampDrain(Map<String, dynamic> crash) {
+      crash['crash_drain_app_state'] = drainState;
+      crash['crash_drain_process_start_time'] = drainStart.toIso8601String();
+      crash['crash_drain_uptime_secs'] = drainUptimeSecs;
+    }
+
     for (final list in results) {
       for (final crash in list) {
         try {
-          crash['crash_drain_app_state'] = drainState;
-          crash['crash_drain_process_start_time'] =
-              drainStart.toIso8601String();
-          crash['crash_drain_uptime_secs'] = drainUptimeSecs;
+          stampDrain(crash);
           _emitSpan('native_crash', _crashAttributes(crash));
         } catch (_) {
           /* never crash the host while reporting a crash */
         }
+      }
+    }
+
+    final previous = _crashDetector?.previousSession;
+    for (final record in exitInfoNew) {
+      try {
+        stampDrain(record);
+        record['crash_source'] = 'exit_info';
+        final attrs = _crashAttributes(record);
+        // Attribute to the session that died, not the one that just started.
+        attrs.remove('session.id');
+        attrs.remove('session.start_time');
+        final session = exitInfoSessionAttributes(record, previous);
+        if (session.isEmpty) {
+          // Older history: the previous session's breadcrumbs are not its.
+          attrs.remove('breadcrumbs');
+        }
+        attrs.addAll(session);
+        if (isCrashClassExitInfo(record['crash_type'] as String?)) {
+          _emitSpan('native_crash', attrs);
+        } else {
+          _emitSpan('app_exit', asAppExitAttributes(attrs));
+        }
+      } catch (_) {
+        /* never crash the host while reporting a crash */
       }
     }
   }
@@ -1562,7 +1692,12 @@ class ScoutFlutter {
   /// understands the iOS Mach world doesn't lose `mach_exception` /
   /// `mach_code` data and an Android backend doesn't lose
   /// `subreason` / `tombstone`.
-  static Map<String, Object> _crashAttributes(Map<String, dynamic> crash) {
+  /// Snake_case `crash_*` keys of one platform-side record → dotted
+  /// `crash.*` attributes, values passed through untouched. Shared by
+  /// `native_crash`, `app_exit` (renamed to `exit.*` afterwards) and the
+  /// OS facts merged onto an exit-info-confirmed `app_crash`.
+  @visibleForTesting
+  static Map<String, Object> flattenCrashRecord(Map<String, dynamic> crash) {
     String? s(String k) {
       final x = crash[k];
       return x is String && x.isNotEmpty ? x : null;
@@ -1592,6 +1727,11 @@ class ScoutFlutter {
         out[dotKey] = value.toString();
       }
     }
+    return out;
+  }
+
+  static Map<String, Object> _crashAttributes(Map<String, dynamic> crash) {
+    final out = flattenCrashRecord(crash);
 
     // Per-report breadcrumbs (iOS): the crash reporter's user-info breadcrumbs are baked
     // into each crash report at crash time, so it always matches the crashed
@@ -1947,6 +2087,7 @@ class ScoutFlutter {
     _deviceOrientation = 'unknown';
     _currentScreenName = null;
     _coldStartTracker = null;
+    _consumedExitInfoPids.clear();
     _connectivityType = 'unknown';
     _sessionManager = null;
     _sampleGate = ScoutSampleGate(

@@ -16,6 +16,36 @@
   OS pre-started for a push), the SDK falls back to the previous
   `initialize()` → first frame measurement. Debug hot restart reuses an old
   process, so debug values can look inflated.
+- **Android low-memory kills are no longer crashes.** `ApplicationExitInfo`
+  `REASON_LOW_MEMORY` (the OS reclaiming a cached background process) was
+  emitted as `native_crash` with `crash.type: low_memory`. On aggressive OEMs
+  this was the majority of all "crashes" and dragged crash-free rates far below
+  what Play Console reports. It is now an `app_exit` span (`exit.reason:
+  low_memory`, `exit.importance`, `exit.pss_kb`, …) that never counts as a
+  crash. Crash counts will drop; re-baseline any alert on `native_crash`.
+- **Exit-info history is attributed to the session that died, not the one that
+  just started.** Every drained record used to carry the live `session.id`, so
+  one launch could mark the new session crashed with deaths from days ago. The
+  session marker now records the process pid; a record whose pid matches the
+  previous marker gets that session's `session.id` / `session.start_time` (plus
+  `crash.previous_session_id`); anything older is emitted without a
+  `session.id` and drops out of per-session crash metrics.
+- **First launch without a drain watermark reports nothing.** Fresh installs
+  and upgrades from an SDK without the watermark used to dump the OS's 16-record
+  exit history (up to weeks old) as crashes of the session that just started.
+  The watermark is now persisted and the backlog skipped.
+- **`app_crash` is checked against the OS before it is emitted (Android 11+).**
+  The session marker only knows the app was never paused before the process
+  died — which is also what a low-memory kill, a swipe from recents or a Force
+  Stop look like, and the same death was then reported twice (`app_crash` for
+  the old session, `native_crash` for the new one). The marker's pid is now
+  looked up in `ApplicationExitInfo`: a crash-class record confirms the crash
+  and its facts are merged onto the span (`crash.source: exit_info`, the OS
+  `crash.timestamp`, `crash.type`, exit status, tombstone); a benign record
+  suppresses it; no record (API < 30, iOS, rolled buffer) keeps the marker
+  verdict (`crash.source: session_marker`).
+- `crash.timestamp` and `crash.started_at` on `app_crash` are now UTC ISO-8601
+  with a `Z` suffix; they were device-local time without a zone.
 
 ### Added
 - `app_startup.anchor` on cold-start spans: `process_start` or `sdk_init`, so
@@ -25,6 +55,12 @@
   to the existing `app_startup.duration` (seconds) — the same pairing as
   `anr.duration_ms`. Backends read the `_ms` key with a seconds fallback.
 - `getProcessStartTimeMillis` platform-channel method (Android, iOS).
+- `app_exit` span (Android): `exit.reason`, `exit.description`, `exit.timestamp`,
+  `exit.importance`, `exit.pid`, `exit.pss_kb`, `exit.rss_kb`,
+  `exit.process_name`, `exit.source: exit_info`, plus `session.id` when the
+  record belongs to the previous session.
+- `crash.source` on `app_crash` (`exit_info` | `session_marker`) and on
+  exit-info `native_crash` spans (`exit_info`).
 
 ### Fixed
 - The integration guide said `app_startup.duration` was in milliseconds. It has

@@ -134,6 +134,37 @@ void main() {
       expect(crumbs, isNull);
     });
 
+    test('marker records the pid and surfaces it in the report', () async {
+      await detector.markSessionStarted(sessionId: 'sess-7', processId: 4242);
+      final marker =
+          json.decode(await markerFile.readAsString()) as Map<String, dynamic>;
+      expect(marker['pid'], 4242);
+      final report = await detector.checkPreviousCrash();
+      expect(report?.pid, 4242);
+      expect(detector.previousSession?.pid, 4242);
+      expect(detector.previousSession?.status, 'started');
+    });
+
+    test('pid defaults to the running process', () async {
+      await detector.markSessionStarted(sessionId: 'sess-8');
+      final marker =
+          json.decode(await markerFile.readAsString()) as Map<String, dynamic>;
+      expect(marker['pid'], pid);
+    });
+
+    test('previousSession is kept for a paused marker too', () async {
+      await detector.markSessionStarted(sessionId: 'sess-9', processId: 99);
+      await detector.markSessionPaused();
+      final report = await detector.checkPreviousCrash();
+      expect(report, isNull, reason: 'paused is not a crash');
+      final prev = detector.previousSession;
+      expect(prev, isNotNull);
+      expect(prev!.sessionId, 'sess-9');
+      expect(prev.pid, 99);
+      expect(prev.status, 'paused');
+      expect(prev.lastActiveAt, isNotNull);
+    });
+
     test('corrupted marker returns null and clears the marker', () async {
       await markerFile.writeAsString('{not json');
       final report = await detector.checkPreviousCrash();
