@@ -25,7 +25,8 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 | Frozen frames | `frozen_frame` | Frames exceeding 700ms |
 | Memory | `flutter.memory.usage` | Native memory gauge — opt-in via `enableMemoryMetrics` (default off; polled every `vitalsCollectionIntervalSeconds`, default 60s) |
 | CPU | `flutter.cpu.usage` | CPU percentage gauge — opt-in via `enableCpuMetrics` (default off) |
-| Crash detection | `app_crash` | Detects OOM/SIGKILL/exit crashes via session marker |
+| Crash detection | `app_crash` | Session marker detects an unclean exit; on Android 11+ the OS exit record for that process confirms or overrules it |
+| Process exits | `app_exit` | Android low-memory kills (`exit.reason: low_memory`) — diagnostic only, never a crash |
 | Native crashes | `native_crash` | JVM exceptions, NDK signals (SIGSEGV, SIGABRT, etc.) with full stack trace, registers, memory map |
 
 ### With navigator observer
@@ -54,13 +55,13 @@ Zero-config OpenTelemetry RUM (Real User Monitoring) for Flutter. One package, o
 
 Three categories of crashes:
 
-- **Session marker** (`app_crash`) — OOM kills, `exit()` calls, and SIGKILL via persistent marker file. Reported on the next launch with the crashed session's breadcrumbs.
+- **Session marker** (`app_crash`) — a persistent marker file records whether the session was paused before the process died. On Android 11+ the marker is checked against the OS's `ApplicationExitInfo` record for the same pid: a crash-class reason (`jvm_crash`, `native_crash`, `anr`) confirms it and its facts are merged onto the span (`crash.source: exit_info`); a benign reason (low-memory reclaim, swipe from recents, Force Stop, `exit()`) suppresses it. Without an OS record (API < 30, iOS) the marker alone decides (`crash.source: session_marker`). Reported on the next launch with the crashed session's breadcrumbs.
 - **JVM / NSException** (`native_crash`) — uncaught Java/Kotlin exceptions on Android, NSExceptions on iOS. Written to disk before the process dies.
 - **Native signals** (`native_crash`) — SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP. On Android, an in-process C signal handler captures stack trace via frame-pointer walk, register dump, signal code, pid/tid/uid, memory map, ABI, build fingerprint, kernel version, process uptime. On iOS, the native crash reporter captures POSIX signals, Mach exceptions, C++ exceptions, and main-thread deadlock, with MetricKit supplying OS-delivered crash/hang diagnostics.
 
 Breadcrumbs are persisted to disk on every record, so they survive crashes and ship with both `app_crash` and `native_crash` spans.
 
-Android `ApplicationExitInfo` post-mortems are filtered to crash-class reasons only (`anr`, `jvm_crash`, `native_crash`, `low_memory`) — normal exits like the user swiping the app away are never reported as crashes — and each record is reported exactly once via a persisted drain watermark. A JVM death produces two spans: `jvm_exception` (in-process, full stack trace) and `jvm_crash` (OS post-mortem, process facts, no stack — Android retains trace blobs only for ANR/native-crash exits).
+Android `ApplicationExitInfo` post-mortems are filtered to crash-class reasons only (`anr`, `jvm_crash`, `native_crash`) — normal exits like the user swiping the app away are never reported as crashes, and a low-memory kill (the OS reclaiming a cached process) is emitted as an `app_exit` span instead, which never counts as a crash. Each record is reported exactly once via a persisted drain watermark; the first launch that has no watermark only records one and reports nothing, because that history predates the SDK. A record is attributed to the session whose process it killed (matched by pid); older records carry no `session.id`. A JVM death produces two spans: `jvm_exception` (in-process, full stack trace) and `jvm_crash` (OS post-mortem, process facts, no stack — Android retains trace blobs only for ANR/native-crash exits).
 
 ## SDK Crash Safety
 
