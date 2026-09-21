@@ -27,6 +27,28 @@
 - `getProcessStartTimeMillis` platform-channel method (Android, iOS).
 
 ### Fixed
+- **iOS did not compile against scout-kotlin-multiplatform `ios-0.1.10`.**
+  `ScoutFlutterPlugin.swift` passed `maxOfflineStorageMb:` before
+  `enableMemoryMetrics:`, but `Scout.startBridge` declares it second to last;
+  Swift rejects out-of-order labelled arguments
+  (`Argument 'enableMemoryMetrics' must precede argument 'maxOfflineStorageMb'`).
+  Present since the forwarding was added in 0.2.1, so 0.2.1 and 0.2.2 fail the
+  same way on any Xcode. The argument now matches the declaration.
+- **The WebView bridge bound pages to a session id the backend never sees.**
+  `ScoutWebViewBridge.injectShim` handed the page the Dart `SessionManager`
+  ids, but since 0.2.0 the native engine is the exporter on Android/iOS and
+  stamps its own `session.id` / `user.anonymous_id` on every span — including
+  the Dart-emitted ones — so in `sessionOnly` (and mirror) mode the page's
+  spans and the host's spans carried different session ids and could not be
+  joined. `relay` was unaffected because the host re-emits. The shim now asks
+  the engine for the ids it stamps (new `getSessionIdentity` platform-channel
+  method on both plugins), and `ScoutFlutter.sessionId` / `anonymousId` return
+  the same ids when the engine is running; they are re-read at init, on app
+  resume and on every shim inject. `ScoutFlutter.refreshSessionIdentity()`
+  re-reads them on demand. Both getters are now `null` until the asynchronous
+  bootstrap has settled which side exports — previously they handed out the
+  Dart id during that window, which is how a host context captured right
+  after `initialize()` ended up with an id the backend never sees.
 - The integration guide said `app_startup.duration` was in milliseconds. It has
   always been seconds.
 

@@ -4,6 +4,9 @@ import ScoutKit
 
 public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     private var channel: FlutterMethodChannel
+    /// Set once `Scout.startBridge` ran; before that the engine has no
+    /// session context to report.
+    private var engineStarted = false
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -56,6 +59,7 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 maxOfflineStorageMb: (args?["maxOfflineStorageMb"] as? Int) ?? 5,
                 debugLogging: (args?["debugLogging"] as? Bool) ?? false
             )
+            engineStarted = true
             result(true)
 
         case "ingestSpans":
@@ -117,6 +121,23 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
 
         case "isDeviceCompromised":
             result(isJailbroken())
+
+        case "getSessionIdentity":
+            // Nil until the engine runs — the Dart side then keeps its own
+            // ids, which is correct because nothing native is exporting.
+            // The iOS engine exposes its SessionContext only as the JSON the
+            // bridge codec produces (`{"sessionId":…,"anonymousId":…,…}`).
+            if engineStarted,
+               let data = ScoutEngine.shared.bridgeContext().data(using: .utf8),
+               let ctx = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let sessionId = ctx["sessionId"] as? String, !sessionId.isEmpty {
+                result([
+                    "sessionId": sessionId,
+                    "anonymousId": (ctx["anonymousId"] as? String) ?? "",
+                ])
+            } else {
+                result(nil)
+            }
 
         case "getProcessStartTimeMillis":
             if let ms = processStartTimeMillis() {

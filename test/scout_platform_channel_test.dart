@@ -29,6 +29,39 @@ void main() {
   });
 
   group('ScoutPlatformChannel', () {
+    group('getSessionIdentity', () {
+      test('returns both ids when the engine answers', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              expect(call.method, 'getSessionIdentity');
+              return {'sessionId': 's-1', 'anonymousId': 'a-1'};
+            });
+        final id = await ScoutPlatformChannel.getSessionIdentity();
+        expect(id?.sessionId, 's-1');
+        expect(id?.anonymousId, 'a-1');
+      });
+
+      test('returns null when the engine is not running', () async {
+        expect(await ScoutPlatformChannel.getSessionIdentity(), isNull);
+      });
+
+      test('returns null for an empty session id', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              return {'sessionId': '', 'anonymousId': 'a-1'};
+            });
+        expect(await ScoutPlatformChannel.getSessionIdentity(), isNull);
+      });
+
+      test('returns null on a channel error', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              throw PlatformException(code: 'boom');
+            });
+        expect(await ScoutPlatformChannel.getSessionIdentity(), isNull);
+      });
+    });
+
     group('getProcessStartTimeMillis', () {
       test('returns the epoch ms the platform reports', () async {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

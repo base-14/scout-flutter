@@ -174,6 +174,19 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "getProcessStartTimeMillis" -> {
                 result.success(processStartTimeMillis())
             }
+            "getSessionIdentity" -> {
+                // Null until Scout.initialize succeeded — the Dart side then
+                // keeps its own ids, which is correct because nothing native
+                // is exporting.
+                val sessionId = runCatching { Scout.sessionId }.getOrNull()
+                result.success(
+                    if (sessionId.isNullOrEmpty()) null
+                    else mapOf(
+                        "sessionId" to sessionId,
+                        "anonymousId" to (runCatching { Scout.anonymousId }.getOrNull() ?: ""),
+                    ),
+                )
+            }
             else -> result.notImplemented()
         }
     }
