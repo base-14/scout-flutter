@@ -1,3 +1,35 @@
+## 0.3.0
+
+### Changed
+- **Cold start is now anchored at the OS process start.** `app_startup`
+  (`app_startup.type: cold`) used to measure from `ScoutFlutter.initialize()` to
+  the first post-frame callback the SDK registered *after* its async bootstrap —
+  a few hundred milliseconds that excluded engine boot, Dart VM start and the
+  splash, and could even land on a later frame. It now measures from the process
+  start reported by the platform (Android `Process.getStartElapsedRealtime`,
+  API 24+; iOS `kp_proc.p_starttime`) to the app's real first rendered frame,
+  armed before `runApp()`. Values will rise to match what Play Console and
+  Xcode Organizer report — re-baseline any alert on this attribute. Call
+  `ScoutFlutter.initialize()` before `runApp()`.
+- Where the process start is unavailable (web/desktop, Android < 24, iOS
+  prewarmed launches, channel errors) or implausible (> 60 s, e.g. a process the
+  OS pre-started for a push), the SDK falls back to the previous
+  `initialize()` → first frame measurement. Debug hot restart reuses an old
+  process, so debug values can look inflated.
+
+### Added
+- `app_startup.anchor` on cold-start spans: `process_start` or `sdk_init`, so
+  dashboards can tell the two measurements apart while older builds are still in
+  the field.
+- `app_startup.duration_ms` (integer milliseconds) on cold and warm spans, next
+  to the existing `app_startup.duration` (seconds) — the same pairing as
+  `anr.duration_ms`. Backends read the `_ms` key with a seconds fallback.
+- `getProcessStartTimeMillis` platform-channel method (Android, iOS).
+
+### Fixed
+- The integration guide said `app_startup.duration` was in milliseconds. It has
+  always been seconds.
+
 ## 0.2.2
 
 ### Added

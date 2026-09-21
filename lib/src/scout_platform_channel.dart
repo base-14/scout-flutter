@@ -92,6 +92,21 @@ class ScoutPlatformChannel {
     }
   }
 
+  /// Epoch milliseconds at which the OS started this process, or null
+  /// when unavailable: web/desktop (MissingPluginException), Android
+  /// below API 24, iOS prewarmed launches, or any channel error. Callers
+  /// must fall back — never substitute "now", which would read as ~0.
+  static Future<int?> getProcessStartTimeMillis() async {
+    try {
+      final v = await _channel.invokeMethod<num>('getProcessStartTimeMillis');
+      if (v == null) return null;
+      final ms = v.toInt();
+      return ms > 0 ? ms : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<String> getCpuArch() async {
     try {
       final result = await _channel.invokeMethod<String>('getCpuArch');

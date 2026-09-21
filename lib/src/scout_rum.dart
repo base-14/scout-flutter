@@ -15,6 +15,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'auto_name_navigator_observer.dart';
+import 'cold_start_tracker.dart';
 import 'fixed_http_metric_exporter.dart';
 import 'fixed_http_log_exporter.dart';
 import 'fixed_http_span_exporter.dart';
@@ -75,8 +76,7 @@ class ScoutFlutter {
   static String? _currentScreenName;
   static FrameMetricsCollector? _frameMetricsCollector;
   static NativeVitalsCollector? _nativeVitalsCollector;
-  static Stopwatch? _coldStartStopwatch;
-  static bool _coldStartRecorded = false;
+  static ColdStartTracker? _coldStartTracker;
   static bool _delegating = false;
   static dynamic _meter;
   static String _connectivityType = 'unknown';
@@ -266,9 +266,15 @@ class ScoutFlutter {
   /// For navigation tracking, add [navigatorObserver] to your app's
   /// navigatorObservers list.
   static Future<void> initialize({required ScoutFlutterConfig config}) async {
-    _coldStartStopwatch ??= Stopwatch()..start();
     _appStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
     WidgetsFlutterBinding.ensureInitialized();
+    if (config.enableStartupTracking) {
+      // Armed before runApp() so the post-frame callback lands on the
+      // app's real first frame; the tracker's stopwatch (the fallback
+      // anchor) starts here too, exactly where 0.2.x started it.
+      _coldStartTracker ??= ColdStartTracker(onColdStart: _onColdStart);
+      _coldStartTracker!.armFirstFrame();
+    }
     if (config.enableErrorTracking) {
       _setupErrorHandlers();
     }
@@ -523,7 +529,9 @@ class ScoutFlutter {
     }
 
     if (config.enableStartupTracking) {
-      _measureColdStart();
+      _coldStartTracker ??= ColdStartTracker(onColdStart: _onColdStart)
+        ..armFirstFrame();
+      unawaited(_coldStartTracker!.ready());
     }
 
     if (config.enableConnectivityTracking) {
@@ -881,27 +889,32 @@ class ScoutFlutter {
     );
   }
 
-  static void _measureColdStart() {
-    if (_coldStartRecorded || _coldStartStopwatch == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_coldStartRecorded) return;
-      _coldStartRecorded = true;
-      final duration = _coldStartStopwatch!.elapsed;
-      _coldStartStopwatch!.stop();
-      _emitSpan('app_startup', {
-        'app_startup.type': 'cold',
-        'app_startup.duration': duration.inMilliseconds / 1000.0,
-        ..._commonAttributes(),
-      });
-      addBreadcrumb('startup', 'cold_start: ${duration.inMilliseconds}ms');
+  /// Cold start = OS process start → first rendered frame (see
+  /// [ColdStartTracker]). Emitted once per process, through the same
+  /// sampling gate as every other span.
+  static void _onColdStart(ColdStartResult r) {
+    try {
+      _emitSpan('app_startup', coldStartAttributes(r));
+      addBreadcrumb('startup', 'cold_start: ${r.durationMs}ms (${r.anchor})');
       // FBC (First Build Complete) — emitted as a vital so dashboards
       // can chart it alongside INV without joining on app_startup.
-      // Uses the same cold-start measurement: SDK init → first
-      // post-frame callback. Process-start-to-first-frame (which
-      // would require an OS-level start time) is a future refinement.
-      _emitVital('fbc', durationMs: duration.inMilliseconds, type: 'startup');
-    });
+      // Same measurement as the cold start above.
+      _emitVital('fbc', durationMs: r.durationMs, type: 'startup');
+    } catch (_) {}
   }
+
+  /// `app_startup.duration` stays in seconds (the contract every
+  /// backend reader relies on); `app_startup.duration_ms` carries the
+  /// unit in its name, mirroring `anr.duration_ms`; `app_startup.anchor`
+  /// tells process-start-anchored values apart from stopwatch fallbacks.
+  @visibleForTesting
+  static Map<String, Object> coldStartAttributes(ColdStartResult r) => {
+    'app_startup.type': 'cold',
+    'app_startup.duration': r.durationSeconds,
+    'app_startup.duration_ms': r.durationMs,
+    'app_startup.anchor': r.anchor,
+    ..._commonAttributes(),
+  };
 
   static void _measureWarmStart() {
     final stopwatch = Stopwatch()..start();
@@ -911,6 +924,7 @@ class ScoutFlutter {
       _emitSpan('app_startup', {
         'app_startup.type': 'warm',
         'app_startup.duration': duration.inMilliseconds / 1000.0,
+        'app_startup.duration_ms': duration.inMilliseconds,
         ..._commonAttributes(),
       });
       addBreadcrumb('startup', 'warm_start: ${duration.inMilliseconds}ms');
@@ -1932,8 +1946,7 @@ class ScoutFlutter {
     }
     _deviceOrientation = 'unknown';
     _currentScreenName = null;
-    _coldStartStopwatch = null;
-    _coldStartRecorded = false;
+    _coldStartTracker = null;
     _connectivityType = 'unknown';
     _sessionManager = null;
     _sampleGate = ScoutSampleGate(

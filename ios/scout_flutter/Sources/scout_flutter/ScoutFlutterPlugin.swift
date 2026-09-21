@@ -118,9 +118,35 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         case "isDeviceCompromised":
             result(isJailbroken())
 
+        case "getProcessStartTimeMillis":
+            if let ms = processStartTimeMillis() {
+                result(NSNumber(value: ms))
+            } else {
+                result(nil)
+            }
+
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    /// Epoch ms at which the kernel forked this process (kp_proc.p_starttime),
+    /// or nil when it cannot serve as a user-perceived launch anchor. iOS 15+
+    /// may prewarm the process minutes before the user taps the icon; such
+    /// launches carry ActivePrewarm=1 in the environment, and we opt out so the
+    /// Dart side falls back to its SDK-init stopwatch instead of over-reporting.
+    private func processStartTimeMillis() -> Int64? {
+        if ProcessInfo.processInfo.environment["ActivePrewarm"] == "1" { return nil }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        let rc = mib.withUnsafeMutableBufferPointer { ptr -> Int32 in
+            sysctl(ptr.baseAddress, u_int(ptr.count), &info, &size, nil, 0)
+        }
+        guard rc == 0 else { return nil }
+        let tv = info.kp_proc.p_starttime
+        let ms = Int64(tv.tv_sec) * 1000 + Int64(tv.tv_usec) / 1000
+        return ms > 0 ? ms : nil
     }
 
     private func isJailbroken() -> Bool {
