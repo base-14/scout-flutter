@@ -2,3 +2,11 @@ include: package:flutter_lints/flutter.yaml
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
+
+# Keep the tree clean on Flutter 3.47+: `flutter pub get` inserts these
+# excludes itself, which made the pub.dev dry run see modified files.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
