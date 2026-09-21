@@ -141,14 +141,65 @@ class ScoutFlutter {
   /// Access the breadcrumb manager.
   static BreadcrumbManager get breadcrumbManager => _breadcrumbManager;
 
-  /// Current session ID.
-  static String? get sessionId => _sessionManager?.sessionId;
+  /// Identity last reported by the native engine. Set only when an engine
+  /// answered, i.e. when the native side is the exporter and its ids are
+  /// the ones that reach the backend.
+  static ({String sessionId, String anonymousId})? _nativeIdentity;
+
+  /// Completes once the bootstrap knows who exports: the native engine
+  /// (its ids are authoritative) or the Dart SDK itself. Until then the
+  /// Dart `SessionManager` id exists but may never reach the backend, so
+  /// the public getters withhold it.
+  static Completer<void>? _identityResolved;
+
+  static bool get _isIdentityResolved =>
+      _identityResolved?.isCompleted ?? false;
+
+  static void _markIdentityResolved() {
+    final c = _identityResolved;
+    if (c != null && !c.isCompleted) c.complete();
+  }
+
+  /// Current session ID — the one stamped on exported telemetry.
+  ///
+  /// When the native engine is the exporter (Android/iOS since 0.2.0) it
+  /// owns session rotation, so this returns the native id as of the last
+  /// [refreshSessionIdentity] (init, app resume, WebView shim inject).
+  /// Elsewhere it is the Dart `SessionManager` id. Null until
+  /// [initialize]'s asynchronous bootstrap has settled which of the two
+  /// applies — await [refreshSessionIdentity] to block on that.
+  static String? get sessionId =>
+      _nativeIdentity?.sessionId ??
+      (_isIdentityResolved ? _sessionManager?.sessionId : null);
+
+  /// Re-read the session and anonymous ids from the native engine and
+  /// return the pair that exported telemetry carries. Waits (up to 5 s)
+  /// for an in-flight [initialize] bootstrap to settle first, and falls
+  /// back to the Dart-side ids when no engine is running.
+  static Future<({String sessionId, String anonymousId})>
+  refreshSessionIdentity() async {
+    final pending = _identityResolved;
+    if (pending != null && !pending.isCompleted) {
+      try {
+        await pending.future.timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
+    final native = await ScoutPlatformChannel.getSessionIdentity();
+    if (native != null) _nativeIdentity = native;
+    return (sessionId: sessionId ?? '', anonymousId: anonymousId ?? '');
+  }
 
   /// Stable per-install anonymous identifier (UUID v4), persisted to
   /// the temp directory and reused across launches until the install
   /// is removed. Exposed for the WebView bridge so embedded web pages
   /// can adopt the native identity.
-  static String? get anonymousId => _anonymousId;
+  ///
+  /// Like [sessionId], reflects the native engine's id when it is the
+  /// exporter.
+  static String? get anonymousId =>
+      _nativeIdentity?.anonymousId.isNotEmpty == true
+          ? _nativeIdentity!.anonymousId
+          : (_isIdentityResolved ? _anonymousId : null);
 
   /// Re-emit a span received from a bridged WebView. Used by
   /// `ScoutWebViewBridge`; not a stable public API for app code.
@@ -278,6 +329,7 @@ class ScoutFlutter {
     if (config.enableErrorTracking) {
       _setupErrorHandlers();
     }
+    _identityResolved ??= Completer<void>();
     unawaited(_bootstrap(config));
   }
 
@@ -296,6 +348,10 @@ class ScoutFlutter {
     } catch (e) {
       debugPrint('ScoutFlutter: initialization failed or timed out: $e');
       _debugLogger.error('initialization failed or timed out: $e');
+    } finally {
+      // A failed bootstrap still settles the question: nothing native is
+      // exporting, so the Dart ids are the ones to report.
+      _markIdentityResolved();
     }
   }
 
@@ -404,6 +460,13 @@ class ScoutFlutter {
       if (config.firstPartyHosts != null)
         'firstPartyHosts': config.firstPartyHosts,
     });
+    // The engine now owns the session; pick up the ids it will stamp so
+    // ScoutFlutter.sessionId / anonymousId describe what is exported.
+    if (_delegating) {
+      final native = await ScoutPlatformChannel.getSessionIdentity();
+      if (native != null) _nativeIdentity = native;
+    }
+    _markIdentityResolved();
 
     // Force HTTP for spans (FlutterOTel defaults to gRPC on mobile).
     // FixedHttpSpanExporter holds one keep-alive connection; the upstream
@@ -875,6 +938,9 @@ class ScoutFlutter {
           _sessionManager?.onForeground();
           _crashDetector?.markSessionResumed();
           addBreadcrumb('lifecycle', 'app_resumed');
+          // A background timeout rotates the native session; re-sync
+          // so sessionId and the WebView shim follow it.
+          if (_delegating) unawaited(refreshSessionIdentity());
           if (_config?.enableStartupTracking == true) {
             _measureWarmStart();
           }
@@ -1949,6 +2015,9 @@ class ScoutFlutter {
     _coldStartTracker = null;
     _connectivityType = 'unknown';
     _sessionManager = null;
+    _nativeIdentity = null;
+    _identityResolved = null;
+    _delegating = false;
     _sampleGate = ScoutSampleGate(
       sessionResolver: () => null,
       alwaysCaptureErrors: true,

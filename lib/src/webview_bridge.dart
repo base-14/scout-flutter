@@ -42,7 +42,9 @@ enum ScoutWebViewMode {
 /// **How it works**
 /// 1. We inject a small JS shim that polls for the page's web SDK
 ///    (`window.Scout`) and calls its `setWebViewBridge(...)` hook with
-///    the native session_id + anonymous_id.
+///    the native session_id + anonymous_id — the ids the native engine
+///    stamps on exported spans, so the page joins the session the
+///    backend actually sees.
 /// 2. In [ScoutWebViewMode.relay] we also register a JavaScript channel
 ///    (`ScoutBridge` by default) and pass the page a `send` function
 ///    that routes spans back through it. Each arriving span is
@@ -168,12 +170,16 @@ class ScoutWebViewBridge {
     String channelName = _defaultChannelName,
     ScoutWebViewMode mode = ScoutWebViewMode.relay,
   }) async {
-    final sessionId = ScoutFlutter.sessionId ?? '';
-    final anonymousId = ScoutFlutter.anonymousId ?? '';
+    // Ask the native engine first: on Android/iOS it is the exporter and
+    // stamps its own session.id / user.anonymous_id on every span, so a
+    // page bound to the Dart-side ids would never join the host session
+    // in the backend. The Dart ids are only the answer where no engine
+    // runs.
+    final identity = await ScoutFlutter.refreshSessionIdentity();
     final shim = _buildShim(
       channelName: channelName,
-      sessionId: sessionId,
-      anonymousId: anonymousId,
+      sessionId: identity.sessionId,
+      anonymousId: identity.anonymousId,
       mode: mode,
     );
     try {

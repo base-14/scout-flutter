@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scout_flutter/scout_flutter.dart';
 
@@ -16,6 +17,68 @@ Future<String> captureShim({
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('injectShim — identity source', () {
+    const channel = MethodChannel('com.base14.scout_flutter');
+
+    void mockIdentity(dynamic Function() reply) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            if (call.method == 'getSessionIdentity') return reply();
+            return null;
+          });
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      ScoutFlutter.resetForTesting();
+    });
+
+    test('injects the native engine ids when the engine is running', () async {
+      // The native engine is the exporter on Android/iOS and stamps its
+      // own session.id / user.anonymous_id on every span — a page bound
+      // to the Dart-side ids would never join the host session.
+      mockIdentity(
+        () => {'sessionId': 'native-session', 'anonymousId': 'native-anon'},
+      );
+      final js = await captureShim(mode: ScoutWebViewMode.sessionOnly);
+      expect(js, contains('var nativeSessionId = "native-session";'));
+      expect(js, contains('var nativeAnonymousId = "native-anon";'));
+    });
+
+    test(
+      'falls back to the Dart ids when the engine reports nothing',
+      () async {
+        mockIdentity(() => null);
+        final js = await captureShim();
+        expect(js, contains('var nativeSessionId = "";'));
+        expect(js, contains('var nativeAnonymousId = "";'));
+      },
+    );
+
+    test('treats empty native ids as absent', () async {
+      mockIdentity(() => {'sessionId': '', 'anonymousId': ''});
+      final js = await captureShim();
+      expect(js, contains('var nativeSessionId = "";'));
+    });
+
+    test('survives a channel error', () async {
+      mockIdentity(() => throw PlatformException(code: 'boom'));
+      await expectLater(captureShim(), completes);
+    });
+
+    test('ScoutFlutter.sessionId reports the id the exporter stamps', () async {
+      mockIdentity(
+        () => {'sessionId': 'native-session', 'anonymousId': 'native-anon'},
+      );
+      await captureShim();
+      expect(ScoutFlutter.sessionId, 'native-session');
+      expect(ScoutFlutter.anonymousId, 'native-anon');
+    });
+  });
+
   group('injectShim — shape', () {
     test('binds via setWebViewBridge and polls for the web SDK', () async {
       final js = await captureShim();

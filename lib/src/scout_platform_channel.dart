@@ -221,6 +221,28 @@ class ScoutPlatformChannel {
     };
   }
 
+  /// The session id and anonymous id the native engine stamps on every
+  /// exported span, or null when no engine is running (web/desktop, or
+  /// native delegation failed). In delegating mode these — not the
+  /// Dart-side `SessionManager` ids — are what the backend sees.
+  static Future<({String sessionId, String anonymousId})?>
+  getSessionIdentity() async {
+    try {
+      final r = await _channel.invokeMapMethod<String, dynamic>(
+        'getSessionIdentity',
+      );
+      final sessionId = r?['sessionId'];
+      if (sessionId is! String || sessionId.isEmpty) return null;
+      final anonymousId = r?['anonymousId'];
+      return (
+        sessionId: sessionId,
+        anonymousId: anonymousId is String ? anonymousId : '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> initNativeDelegate(Map<String, dynamic> args) async {
     try {
       final r = await _channel.invokeMethod<bool>('initNativeDelegate', args);
