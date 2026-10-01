@@ -1,4 +1,4 @@
-## Unreleased
+## 0.3.1
 
 ### Added
 - **Cellular generation on every span: `network.connection.subtype`.** `4g` / `5g`
