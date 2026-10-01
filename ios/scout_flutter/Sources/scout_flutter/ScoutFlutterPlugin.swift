@@ -1,3 +1,4 @@
+import CoreTelephony
 import Flutter
 import Scout
 import ScoutKit
@@ -7,6 +8,7 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
     /// Set once `Scout.startBridge` ran; before that the engine has no
     /// session context to report.
     private var engineStarted = false
+    private let telephonyNetworkInfo = CTTelephonyNetworkInfo()
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(
@@ -108,6 +110,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 result("")
             }
 
+        case "getNetworkSubtype":
+            result(networkSubtype())
+
         case "getCpuArch":
             #if arch(arm64)
             result("arm64")
@@ -168,6 +173,28 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         let tv = info.kp_proc.p_starttime
         let ms = Int64(tv.tv_sec) * 1000 + Int64(tv.tv_usec) / 1000
         return ms > 0 ? ms : nil
+    }
+
+    private func networkSubtype() -> String {
+        guard let raw = telephonyNetworkInfo.serviceCurrentRadioAccessTechnology?.values.first else {
+            return ""
+        }
+        switch raw.replacingOccurrences(of: "CTRadioAccessTechnology", with: "") {
+        case "NRNSA": return "nrnsa"
+        case "NR": return "nr"
+        case "LTE": return "lte"
+        case "WCDMA": return "umts"
+        case "HSDPA": return "hsdpa"
+        case "HSUPA": return "hsupa"
+        case "CDMA1x": return "cdma"
+        case "CDMAEVDORev0": return "evdo_0"
+        case "CDMAEVDORevA": return "evdo_a"
+        case "CDMAEVDORevB": return "evdo_b"
+        case "eHRPD": return "ehrpd"
+        case "GPRS": return "gprs"
+        case "Edge": return "edge"
+        default: return ""
+        }
     }
 
     private func isJailbroken() -> Bool {

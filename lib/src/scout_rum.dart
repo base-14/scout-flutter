@@ -80,6 +80,7 @@ class ScoutFlutter {
   static bool _delegating = false;
   static dynamic _meter;
   static String _connectivityType = 'unknown';
+  static String _networkSubtype = '';
   static String _deviceOrientation = 'unknown';
   static WidgetsBindingObserver? _orientationObserver;
   static SessionManager? _sessionManager;
@@ -603,8 +604,9 @@ class ScoutFlutter {
       ) {
         try {
           if (result.isNotEmpty) {
-            _connectivityType = result.first.name;
+            _connectivityType = normalizeConnectionType(result.first.name);
           }
+          unawaited(_refreshNetworkSubtype());
           _flushOfflineQueue();
         } catch (_) {}
       });
@@ -1286,10 +1288,12 @@ class ScoutFlutter {
     try {
       final connectivity = await Connectivity().checkConnectivity();
       if (connectivity.isNotEmpty) {
-        _connectivityType = connectivity.first.name;
+        _connectivityType = normalizeConnectionType(connectivity.first.name);
         attrs['network.connection.type'] = _connectivityType;
       }
     } catch (_) {}
+
+    await _refreshNetworkSubtype();
 
     try {
       final raw = Platform.localeName;
@@ -1497,6 +1501,23 @@ class ScoutFlutter {
     if (depth == 0 && out.isEmpty) return const [];
     return out;
   }
+
+  static Future<void> _refreshNetworkSubtype() async {
+    if (_delegating) return;
+    try {
+      _networkSubtype = await ScoutPlatformChannel.getNetworkSubtype();
+    } catch (_) {
+      _networkSubtype = '';
+    }
+  }
+
+  static const Map<String, String> _connectionTypeAliases = {
+    'mobile': 'cellular',
+  };
+
+  @visibleForTesting
+  static String normalizeConnectionType(String raw) =>
+      _connectionTypeAliases[raw] ?? raw;
 
   /// ApplicationExitInfo reasons that represent an actual crash-class
   /// death worth a `native_crash` span. Everything else in the exit
@@ -1770,6 +1791,10 @@ class ScoutFlutter {
       if (_anonymousId != null) 'user.anonymous_id': _anonymousId!,
       if (_connectivityType != 'unknown')
         'network.connection.type': _connectivityType,
+      if (!_delegating &&
+          _connectivityType == 'cellular' &&
+          _networkSubtype.isNotEmpty)
+        'network.connection.subtype': _networkSubtype,
       if (_deviceOrientation != 'unknown')
         'device.orientation': _deviceOrientation,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
@@ -2014,6 +2039,7 @@ class ScoutFlutter {
     _currentScreenName = null;
     _coldStartTracker = null;
     _connectivityType = 'unknown';
+    _networkSubtype = '';
     _sessionManager = null;
     _nativeIdentity = null;
     _identityResolved = null;

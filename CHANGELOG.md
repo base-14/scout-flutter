@@ -1,3 +1,25 @@
+## Unreleased
+
+### Added
+- **Cellular generation on every span: `network.connection.subtype`.** `4g` / `5g`
+  granularity that `network.connection.type` could never carry — it only names the
+  transport. Values follow the OpenTelemetry vocabulary (`nr`, `nrnsa`, `lte_ca`,
+  `lte`, `hspap`, `umts`, `edge`, …) and are emitted only while the active
+  transport is cellular. Android reads `TelephonyCallback.DisplayInfoListener`
+  (API 31+, no permission, distinguishes 5G NSA from its LTE anchor) and falls
+  back to `TelephonyManager.getDataNetworkType()` only when the host app already
+  holds `READ_PHONE_STATE`; the plugin declares no permissions. iOS reads
+  `CTTelephonyNetworkInfo.serviceCurrentRadioAccessTechnology`. When the native
+  engine is delegating, the attribute comes from it per span instead, so the value
+  is never a stale Dart-side snapshot — including on spans relayed from a WebView.
+
+### Changed
+- **`network.connection.type` reports `cellular` instead of `mobile`.** The value
+  came straight from `connectivity_plus`' enum name, which disagreed with the RUM
+  semantics spec and with what scout-android and scout-ios emit for the same
+  transport, so dashboards had to match both spellings. Other transports
+  (`wifi`, `ethernet`, `none`, `vpn`, `bluetooth`) are unchanged.
+
 ## 0.3.0
 
 ### Changed

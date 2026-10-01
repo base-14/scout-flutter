@@ -107,6 +107,15 @@ class ScoutPlatformChannel {
     }
   }
 
+  static Future<String> getNetworkSubtype() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getNetworkSubtype');
+      return result ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   static Future<String> getCpuArch() async {
     try {
       final result = await _channel.invokeMethod<String>('getCpuArch');

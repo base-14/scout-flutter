@@ -29,6 +29,31 @@ void main() {
   });
 
   group('ScoutPlatformChannel', () {
+    group('getNetworkSubtype', () {
+      test('returns the radio generation the platform reports', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              expect(call.method, 'getNetworkSubtype');
+              return 'nrnsa';
+            });
+        expect(await ScoutPlatformChannel.getNetworkSubtype(), 'nrnsa');
+      });
+
+      test('falls back to empty when the platform has no answer', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async => null);
+        expect(await ScoutPlatformChannel.getNetworkSubtype(), '');
+      });
+
+      test('swallows a missing platform implementation', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              throw MissingPluginException();
+            });
+        expect(await ScoutPlatformChannel.getNetworkSubtype(), '');
+      });
+    });
+
     group('getSessionIdentity', () {
       test('returns both ids when the engine answers', () async {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

@@ -22,11 +22,13 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
         channel.setMethodCallHandler(this)
         context = binding.applicationContext
         CrashReporter.install(binding.applicationContext)
+        NetworkSubtype.install(binding.applicationContext)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         anrWatchdog?.stop()
+        context?.let { NetworkSubtype.stop(it) }
         context = null
     }
 
@@ -161,6 +163,10 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             }
             "getOsBuild" -> {
                 result.success(android.os.Build.DISPLAY ?: "")
+            }
+            "getNetworkSubtype" -> {
+                val ctx = context
+                result.success(if (ctx == null) "" else NetworkSubtype.current(ctx))
             }
             "getCpuArch" -> {
                 result.success(android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
