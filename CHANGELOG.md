@@ -1,3 +1,12 @@
+## 0.3.2
+
+### Security
+- **Android no longer ships the vulnerable OkHttp 4.12.0.** The native engine is
+  now `io.base14:scout-android:0.1.11`, which pins OkHttp to 4.12.1 through
+  `okhttp-bom`. Version 0.1.10 pulled in 4.12.0 through `ktor-client-okhttp`, so every
+  app using the plugin shipped it on Android. Dart-side HTTP capture uses
+  `dart:io` and was never affected.
+
 ## 0.3.1
 
 ### Added
