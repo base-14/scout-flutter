@@ -33,6 +33,30 @@ void main() {
       expect(manager.isSampled, isFalse);
     });
 
+    test('adopted external sampling overrides the local roll', () {
+      final unsampled = SessionManager(sampleRate: 0.0);
+      unsampled.adoptExternalSampling(true);
+      expect(unsampled.isSampled, isTrue);
+
+      final sampled = SessionManager(sampleRate: 100.0);
+      sampled.adoptExternalSampling(false);
+      expect(sampled.isSampled, isFalse);
+    });
+
+    test('adopted external sampling survives rotation', () {
+      final manager = SessionManager(sampleRate: 0.0);
+      manager.adoptExternalSampling(true);
+      manager.rotateSession();
+      expect(manager.isSampled, isTrue);
+    });
+
+    test('clearing external sampling restores the local roll', () {
+      final manager = SessionManager(sampleRate: 0.0);
+      manager.adoptExternalSampling(true);
+      manager.adoptExternalSampling(null);
+      expect(manager.isSampled, isFalse);
+    });
+
     test('onBackground + onForeground within timeout keeps same session', () {
       final manager = SessionManager(sampleRate: 100.0, timeoutMinutes: 30);
       final originalId = manager.sessionId;

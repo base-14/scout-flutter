@@ -1,3 +1,18 @@
+## Unreleased
+
+### Fixed
+- **Flutter telemetry is no longer sampled twice when the native engine
+  exports it.** The Dart side rolled its own per-session decision and the
+  native engine applied its own on top, so Flutter spans in a delegating app
+  were kept at roughly `sessionSampleRate²` (0.01% at the default 1%) and
+  Flutter logs and metrics landed in different sessions than native
+  telemetry. The plugin now adopts the native engine's sampling decision, so
+  Flutter and native telemetry share one decision per session at the
+  configured rate.
+- **`ScoutFlutter.sessionId` and `anonymousId` on iOS now return the ids the
+  native engine exports.** The iOS plugin looked up the wrong keys in the
+  engine's session context and always fell back to the Dart-side ids.
+
 ## 0.3.2
 
 ### Security

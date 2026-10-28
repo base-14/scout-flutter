@@ -145,7 +145,15 @@ class ScoutFlutter {
   /// Identity last reported by the native engine. Set only when an engine
   /// answered, i.e. when the native side is the exporter and its ids are
   /// the ones that reach the backend.
-  static ({String sessionId, String anonymousId})? _nativeIdentity;
+  static ({String sessionId, String anonymousId, bool? sampled})?
+  _nativeIdentity;
+
+  static void _adoptNativeIdentity(
+    ({String sessionId, String anonymousId, bool? sampled}) native,
+  ) {
+    _nativeIdentity = native;
+    _sessionManager?.adoptExternalSampling(native.sampled);
+  }
 
   /// Completes once the bootstrap knows who exports: the native engine
   /// (its ids are authoritative) or the Dart SDK itself. Until then the
@@ -186,7 +194,7 @@ class ScoutFlutter {
       } catch (_) {}
     }
     final native = await ScoutPlatformChannel.getSessionIdentity();
-    if (native != null) _nativeIdentity = native;
+    if (native != null) _adoptNativeIdentity(native);
     return (sessionId: sessionId ?? '', anonymousId: anonymousId ?? '');
   }
 
@@ -465,7 +473,7 @@ class ScoutFlutter {
     // ScoutFlutter.sessionId / anonymousId describe what is exported.
     if (_delegating) {
       final native = await ScoutPlatformChannel.getSessionIdentity();
-      if (native != null) _nativeIdentity = native;
+      if (native != null) _adoptNativeIdentity(native);
     }
     _markIdentityResolved();
 

@@ -64,6 +64,20 @@ void main() {
         final id = await ScoutPlatformChannel.getSessionIdentity();
         expect(id?.sessionId, 's-1');
         expect(id?.anonymousId, 'a-1');
+        expect(id?.sampled, isNull);
+      });
+
+      test('returns the engine sampling decision', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              return {
+                'sessionId': 's-1',
+                'anonymousId': 'a-1',
+                'sampled': false,
+              };
+            });
+        final id = await ScoutPlatformChannel.getSessionIdentity();
+        expect(id?.sampled, isFalse);
       });
 
       test('returns null when the engine is not running', () async {

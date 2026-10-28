@@ -181,20 +181,23 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                 result.success(processStartTimeMillis())
             }
             "getSessionIdentity" -> {
-                // Null until Scout.initialize succeeded — the Dart side then
-                // keeps its own ids, which is correct because nothing native
-                // is exporting.
-                val sessionId = runCatching { Scout.sessionId }.getOrNull()
-                result.success(
-                    if (sessionId.isNullOrEmpty()) null
-                    else mapOf(
-                        "sessionId" to sessionId,
-                        "anonymousId" to (runCatching { Scout.anonymousId }.getOrNull() ?: ""),
-                    ),
-                )
+                result.success(sessionIdentity())
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun sessionIdentity(): Map<String, Any>? {
+        val ctx = runCatching { ScoutBridge.context()?.let { org.json.JSONObject(it) } }.getOrNull()
+            ?: return null
+        val sessionId = ctx.optString("session.id")
+        if (sessionId.isEmpty()) return null
+        val identity = mutableMapOf<String, Any>(
+            "sessionId" to sessionId,
+            "anonymousId" to ctx.optString("user.anonymous_id"),
+        )
+        if (ctx.has("session.sampled")) identity["sampled"] = ctx.optBoolean("session.sampled")
+        return identity
     }
 
     /// Epoch ms at which the OS forked this process, or null when unknown.

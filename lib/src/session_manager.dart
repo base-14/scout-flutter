@@ -28,6 +28,7 @@ class SessionManager {
 
   String _sessionId;
   bool _isSampled;
+  bool? _externalSampled;
   DateTime? _backgroundTimestamp;
   late DateTime _sessionStartTime;
   File? _storeFile;
@@ -126,7 +127,11 @@ class SessionManager {
   }
 
   /// Whether the current session is sampled.
-  bool get isSampled => _isSampled;
+  bool get isSampled => _externalSampled ?? _isSampled;
+
+  void adoptExternalSampling(bool? sampled) {
+    _externalSampled = sampled;
+  }
 
   /// Wall-clock time when the current session started. Rehydrated from
   /// disk on resume so it survives process restarts; reset on rotation.

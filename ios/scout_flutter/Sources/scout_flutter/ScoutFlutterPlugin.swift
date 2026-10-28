@@ -128,18 +128,18 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
             result(isJailbroken())
 
         case "getSessionIdentity":
-            // Nil until the engine runs — the Dart side then keeps its own
-            // ids, which is correct because nothing native is exporting.
-            // The iOS engine exposes its SessionContext only as the JSON the
-            // bridge codec produces (`{"sessionId":…,"anonymousId":…,…}`).
             if engineStarted,
                let data = ScoutEngine.shared.bridgeContext().data(using: .utf8),
                let ctx = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-               let sessionId = ctx["sessionId"] as? String, !sessionId.isEmpty {
-                result([
+               let sessionId = ctx["session.id"] as? String, !sessionId.isEmpty {
+                var identity: [String: Any] = [
                     "sessionId": sessionId,
-                    "anonymousId": (ctx["anonymousId"] as? String) ?? "",
-                ])
+                    "anonymousId": (ctx["user.anonymous_id"] as? String) ?? "",
+                ]
+                if let sampled = ctx["session.sampled"] as? Bool {
+                    identity["sampled"] = sampled
+                }
+                result(identity)
             } else {
                 result(nil)
             }
