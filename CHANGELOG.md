@@ -1,4 +1,4 @@
-## Unreleased
+## 0.3.3
 
 ### Fixed
 - **Flutter telemetry is no longer sampled twice when the native engine
