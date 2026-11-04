@@ -176,11 +176,17 @@ class ScoutWebViewBridge {
     // in the backend. The Dart ids are only the answer where no engine
     // runs.
     final identity = await ScoutFlutter.refreshSessionIdentity();
+    // Hand the page the host's sampling decision, so a user-"no" session
+    // also stops the page's spans when it exports on its own (session-only
+    // mode). Pages on older web SDKs ignore the extra fields.
+    final decision = ScoutFlutter.sessionSamplingDecision;
     final shim = _buildShim(
       channelName: channelName,
       sessionId: identity.sessionId,
       anonymousId: identity.anonymousId,
       mode: mode,
+      sampled: decision?.sampled,
+      samplingSource: decision?.source,
     );
     try {
       await runJavaScript(shim);
@@ -265,9 +271,13 @@ class ScoutWebViewBridge {
     required String sessionId,
     required String anonymousId,
     required ScoutWebViewMode mode,
+    bool? sampled,
+    String? samplingSource,
   }) {
     // jsonEncode handles quoting / escaping safely.
     final encSession = jsonEncode(sessionId);
+    final encSampled = jsonEncode(sampled);
+    final encSource = jsonEncode(samplingSource);
     final encAnon = jsonEncode(anonymousId);
     final encChannel = jsonEncode(channelName);
     final relay = mode == ScoutWebViewMode.relay;
@@ -277,7 +287,10 @@ class ScoutWebViewBridge {
   var nativeAnonymousId = $encAnon;
   var channelName = $encChannel;
   var relay = $relay;
-  if (window.__SCOUT_WEBVIEW_BRIDGED === nativeSessionId) return;
+  var sampled = $encSampled;
+  var samplingSource = $encSource;
+  var bindKey = nativeSessionId + '|' + sampled;
+  if (window.__SCOUT_WEBVIEW_BRIDGED === bindKey) return;
   function transport() {
     var ch = window[channelName];
     if (ch && typeof ch.postMessage === 'function') {
@@ -297,6 +310,10 @@ class ScoutWebViewBridge {
         sessionId: nativeSessionId,
         anonymousId: nativeAnonymousId,
       };
+      if (typeof sampled === 'boolean') {
+        bridge.sampled = sampled;
+        if (samplingSource) bridge.samplingSource = samplingSource;
+      }
       if (relay) {
         bridge.relay = true;
         bridge.send = function(payload) {
@@ -307,7 +324,7 @@ class ScoutWebViewBridge {
       }
       try {
         S.setWebViewBridge(bridge);
-        window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;
+        window.__SCOUT_WEBVIEW_BRIDGED = bindKey;
       } catch (_) {}
       return;
     }

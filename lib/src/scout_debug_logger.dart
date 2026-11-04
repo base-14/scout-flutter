@@ -22,9 +22,21 @@ class ScoutDebugLogger {
     );
   }
 
-  void session({required String sessionId, required bool sampled}) {
+  void session({
+    required String sessionId,
+    required bool sampled,
+    String? source,
+  }) {
     if (!enabled) return;
-    debugPrint('$_prefix session $sessionId sampled=$sampled');
+    debugPrint(
+      '$_prefix session $sessionId sampled=$sampled'
+      '${source != null ? ' source=$source' : ''}',
+    );
+  }
+
+  void userSampling(bool? value) {
+    if (!enabled) return;
+    debugPrint('$_prefix userSampling=$value (applies at next session start)');
   }
 
   void sample({required String name, required String decision}) {

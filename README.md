@@ -72,6 +72,39 @@ By default Scout samples **1% of sessions** (`sessionSampleRate: 1.0`). The deci
 
 Error- and crash-class spans (`error`, `native_crash`, `app_crash`, `anr`, `ui_hang`) and error-level logs bypass the session sample rate by default. Set `alwaysCaptureErrors: false` to subject them to the same gate. Sampling is enforced both at the OpenTelemetry layer (so it also covers direct `tracer.startSpan` calls) and in a single fail-closed gate shared by every emit path — telemetry produced before the session exists is dropped, never leaked.
 
+### User-based sampling
+
+Per-session sampling means one user ends up with some sessions kept and others dropped. To decide **per user** instead, for example by cohort, plan or geography, pass a value from your own remote config or feature-flag service. Scout makes no network call for this; the targeting is entirely yours.
+
+```dart
+// At startup: the last-fetched remote-config value, read synchronously from its cache.
+ScoutFlutter.initialize(
+  config: ScoutFlutterConfig(
+    serviceName: 'my-app',
+    endpoint: '…',
+    userSampling: remoteConfig.getCachedBool('scout_user_sampling'),
+  ),
+);
+
+// When the value arrives or changes (fetch completes, user logs in):
+ScoutFlutter.setUserSampling(true);  // keep this user's sessions
+ScoutFlutter.setUserSampling(false); // drop this user's spans; logs and metrics still flow
+ScoutFlutter.setUserSampling(null);  // no opinion: fall back to sessionSampleRate
+```
+
+| Value at session start | Spans | Logs and metrics |
+|---|---|---|
+| `true` | all sent | sent |
+| `false` | none, except error-class spans while `alwaysCaptureErrors` is on | **still sent** |
+| `null` / never set | `sessionSampleRate` roll, as above | as above |
+
+- **Applies at the next session start, never mid-session.** A new session starts after idle timeout, after max duration, on the next launch, or on a user switch. A resumed session keeps its decision.
+- **Persisted.** The latest value is stored, so a launch that passes nothing still honours it. A non-null `userSampling` at init wins over the stored value, and a `setUserSampling` call before `initialize` wins over both.
+- **User switches.** While user sampling is in play, `clearUser()` (which also resets the value), and `setUser()` with an id different from the previous one, start a new session. On an account switch, call `setUserSampling(newValue)` **before** `setUser(...)`. Going from anonymous to the first login keeps the current session.
+- **Hybrid apps.** When the native engine owns the session (Android/iOS), the value, `setUser` and `clearUser` are forwarded to it, and Flutter follows its decision. In-app WebViews bound with `ScoutWebViewBridge.injectShim` receive the decision too. That requires scout-react ≥ 0.1.22 on the page.
+- **Verify in Scout.** Spans and logs carry `session.sampling_source` = `user` | `fallback`. `ScoutFlutter.sessionSamplingDecision` returns the current decision in-app.
+- **Not a kill switch.** The SDK keeps running for a "no" user; only their spans stop.
+
 ## Export cadence
 
 All three signals share one batching model, governed by four knobs:
@@ -91,7 +124,8 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 
 ```
 [scout] init ok (service=my-app endpoint=http://localhost:4318 v=1.0.0 sampleRate=1.0 alwaysCaptureErrors=true)
-[scout] session a1b2c3 sampled=true
+[scout] session a1b2c3 sampled=true source=fallback
+[scout] userSampling=false (applies at next session start)
 [scout] span screen_view → recordAndSample
 [scout] span http.request → drop
 [scout] export batch: 8 spans (212ms) ok
@@ -109,6 +143,8 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 - `ScoutFlutter.addBreadcrumb(type, message)` — error context
 - `ScoutFlutter.reportError(error, stackTrace)` — manual error reporting
 - `ScoutFlutter.setUser(id: ..., attributes: ...)` / `clearUser()` — user identity
+- `ScoutFlutter.setUserSampling(bool?)` / `userSampling` config — per-user sampling from your remote config (see [User-based sampling](#user-based-sampling))
+- `ScoutFlutter.sessionSamplingDecision` — the current session's `sampled` flag and its source (`user` | `fallback`)
 - `ScoutFlutter.setSessionAttributes({...})` / `clearSessionAttributes()` — session-scoped attributes
 - `RumUserActionAnnotation` — custom tap labels for non-standard widgets
 - `headers` config — OTLP auth headers sent with every export (e.g. `Authorization: Bearer …`)

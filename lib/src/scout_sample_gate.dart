@@ -22,6 +22,11 @@ class ScoutSampleGate {
 
   bool _sessionSampled() => sessionResolver()?.isSampled ?? false;
 
+  /// Spans follow `sampled`, but logs and metrics also flow for a user-"no"
+  /// session. Only the fallback roll drops them.
+  bool _logsAndMetricsAllowed() =>
+      sessionResolver()?.allowsLogsAndMetrics ?? false;
+
   /// Whether a span with [name] should be recorded and exported.
   bool shouldSampleSpan(String name) {
     if (alwaysCaptureErrors && kErrorClassSpans.contains(name)) return true;
@@ -29,13 +34,13 @@ class ScoutSampleGate {
   }
 
   /// Whether metric data points should be recorded.
-  bool shouldSampleMetric() => _sessionSampled();
+  bool shouldSampleMetric() => _logsAndMetricsAllowed();
 
   /// Whether a log entry should be exported. [isError] marks
   /// error-severity entries, which bypass sampling when
   /// [alwaysCaptureErrors] is set.
   bool shouldSampleLog({required bool isError}) {
     if (alwaysCaptureErrors && isError) return true;
-    return _sessionSampled();
+    return _logsAndMetricsAllowed();
   }
 }

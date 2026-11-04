@@ -84,6 +84,15 @@ class ScoutFlutter {
   static String _deviceOrientation = 'unknown';
   static WidgetsBindingObserver? _orientationObserver;
   static SessionManager? _sessionManager;
+
+  /// The app-supplied per-user sampling value used at the next session start
+  /// (`null` means no opinion). Persisted in [_userSamplingFile].
+  static bool? _pendingUserSampling;
+  static File? _userSamplingFile;
+
+  /// Set once [setUserSampling] runs, so init-time hydration never overwrites
+  /// a newer runtime value.
+  static bool _userSamplingSetAtRuntime = false;
   // Fail-closed default so nothing can leak before initialize() wires
   // the real gate; error-class telemetry still bypasses it.
   static ScoutSampleGate _sampleGate = ScoutSampleGate(
@@ -145,14 +154,28 @@ class ScoutFlutter {
   /// Identity last reported by the native engine. Set only when an engine
   /// answered, i.e. when the native side is the exporter and its ids are
   /// the ones that reach the backend.
-  static ({String sessionId, String anonymousId, bool? sampled})?
+  static ({
+    String sessionId,
+    String anonymousId,
+    bool? sampled,
+    String? samplingSource,
+  })?
   _nativeIdentity;
 
   static void _adoptNativeIdentity(
-    ({String sessionId, String anonymousId, bool? sampled}) native,
+    ({
+      String sessionId,
+      String anonymousId,
+      bool? sampled,
+      String? samplingSource,
+    })
+    native,
   ) {
     _nativeIdentity = native;
-    _sessionManager?.adoptExternalSampling(native.sampled);
+    _sessionManager?.adoptExternalSampling(
+      native.sampled,
+      samplingSource: native.samplingSource,
+    );
   }
 
   /// Completes once the bootstrap knows who exports: the native engine
@@ -396,6 +419,10 @@ class ScoutFlutter {
       _anonymousId ??= uuidV4();
     }
 
+    // Per-user sampling must be in memory before the SessionManager below
+    // decides the first session.
+    await _hydrateUserSampling(config);
+
     // Session manager FIRST — before the tracer, meter, and every
     // detector. The sampling gates fail closed when no session exists,
     // so anything wired before this point would drop its telemetry;
@@ -406,9 +433,17 @@ class ScoutFlutter {
       sampleRate: config.sessionSampleRate,
       timeoutMinutes: config.sessionTimeoutMinutes,
       maxDurationMinutes: config.maxSessionDurationMinutes,
+      pendingUserSampling: () => _pendingUserSampling,
       onSessionChanged:
-          (sessionId, sampled) =>
-              _debugLogger.session(sessionId: sessionId, sampled: sampled),
+          (sessionId, sampled) => _debugLogger.session(
+            sessionId: sessionId,
+            sampled: sampled,
+            source:
+                _sessionManager?.samplingSource ??
+                (_pendingUserSampling != null
+                    ? kSamplingSourceUser
+                    : kSamplingSourceFallback),
+          ),
     );
 
     try {
@@ -466,12 +501,18 @@ class ScoutFlutter {
       'enableFrameMetrics': config.enableFrameMetrics,
       'metricExportIntervalSeconds': config.metricExportIntervalSeconds ?? -1,
       'debugLogging': config.debugLogging,
+      if (_pendingUserSampling != null) 'userSampling': _pendingUserSampling,
       if (config.firstPartyHosts != null)
         'firstPartyHosts': config.firstPartyHosts,
     });
     // The engine now owns the session; pick up the ids it will stamp so
     // ScoutFlutter.sessionId / anonymousId describe what is exported.
     if (_delegating) {
+      // A host app's native owner may have started its session before this
+      // layer existed; forwarding hands it the value for its next session.
+      if (_pendingUserSampling != null) {
+        await ScoutPlatformChannel.setUserSampling(_pendingUserSampling);
+      }
       final native = await ScoutPlatformChannel.getSessionIdentity();
       if (native != null) _adoptNativeIdentity(native);
     }
@@ -1757,7 +1798,13 @@ class ScoutFlutter {
   /// [id] is optional — pass null/empty to skip the `user.id` tag.
   /// Bare attribute keys are auto-prefixed with `user.`. Keys that already
   /// start with `user.` are passed through unchanged.
+  ///
+  /// While user sampling is in play, switching from one id to a different id
+  /// starts a new session, so the new user never inherits the previous user's
+  /// sampling decision. On an account switch, call [setUserSampling] with the
+  /// new user's value *before* this.
   static void setUser({String? id, Map<String, Object>? attributes}) {
+    final previous = userId;
     final out = <String, Object>{};
     if (id != null && id.isNotEmpty) {
       out['user.id'] = id;
@@ -1767,11 +1814,129 @@ class ScoutFlutter {
       out[key] = v;
     });
     _userAttributes = out;
+    if (_delegating) {
+      // The native owner holds the session, so it applies the rotation rule.
+      unawaited(
+        _forwardIdentityChange(
+          () => ScoutPlatformChannel.setUser(
+            id: userId,
+            attributes: {
+              for (final e in out.entries)
+                if (e.key != 'user.id') e.key: e.value.toString(),
+            },
+          ),
+        ),
+      );
+    } else {
+      _rotateIfUserChanged(previous, userId);
+    }
   }
 
-  /// Clear user identity.
+  /// Clear user identity and the per-user sampling value. Starts a new
+  /// session if user sampling was in play.
   static void clearUser() {
+    final previous = userId;
     _userAttributes = {};
+    _setPendingUserSampling(null);
+    if (_delegating) {
+      // Native clearUser also resets the owner's stored value.
+      unawaited(_forwardIdentityChange(ScoutPlatformChannel.clearUser));
+    } else {
+      _rotateIfUserChanged(previous, null);
+    }
+  }
+
+  /// Per-user sampling decided by your app, typically from your own remote
+  /// config or feature flags. `true` keeps this user's sessions, `false`
+  /// drops their spans (logs and metrics still flow), and `null` falls back
+  /// to `sessionSampleRate`.
+  ///
+  /// The value applies from the next session start, never to the current
+  /// session, and is persisted, so the next launch honours it even when
+  /// nothing is passed at init. Safe to call before [initialize].
+  static void setUserSampling(bool? value) {
+    _setPendingUserSampling(value);
+    _debugLogger.userSampling(value);
+    if (_delegating) unawaited(ScoutPlatformChannel.setUserSampling(value));
+  }
+
+  /// The latest app-supplied per-user sampling value; `null` means none.
+  static bool? get userSampling => _pendingUserSampling;
+
+  /// The current session's sampling decision and where it came from
+  /// (`'user'` or `'fallback'`), as stamped on exported telemetry. When the
+  /// native engine owns the session, this follows the engine's decision as
+  /// of the last [refreshSessionIdentity]. Null before [initialize].
+  static ({bool sampled, String source})? get sessionSamplingDecision {
+    final sm = _sessionManager;
+    if (sm == null) return null;
+    return (sampled: sm.isSampled, source: sm.samplingSource);
+  }
+
+  static void _setPendingUserSampling(bool? value) {
+    _pendingUserSampling = value;
+    _userSamplingSetAtRuntime = true;
+    unawaited(_persistUserSampling(value));
+  }
+
+  static Future<void> _hydrateUserSampling(ScoutFlutterConfig config) async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      _userSamplingFile = File('${docsDir.path}/scout_user_sampling');
+    } catch (_) {}
+    if (_userSamplingSetAtRuntime) {
+      // A value set before initialize wins over both init and stored values.
+      await _persistUserSampling(_pendingUserSampling);
+      return;
+    }
+    final init = config.userSampling;
+    if (init != null) {
+      _pendingUserSampling = init;
+      await _persistUserSampling(init);
+      return;
+    }
+    try {
+      final f = _userSamplingFile;
+      if (f != null && await f.exists()) {
+        final raw = (await f.readAsString()).trim();
+        _pendingUserSampling =
+            raw == 'true' ? true : (raw == 'false' ? false : null);
+      }
+    } catch (_) {}
+  }
+
+  static Future<void> _persistUserSampling(bool? value) async {
+    final f = _userSamplingFile;
+    if (f == null) return;
+    try {
+      if (value == null) {
+        if (await f.exists()) await f.delete();
+      } else {
+        await f.writeAsString(value.toString());
+      }
+    } catch (_) {}
+  }
+
+  static void _rotateIfUserChanged(String? previous, String? next) {
+    final sm = _sessionManager;
+    if (sm == null) return;
+    if (shouldRotateOnIdentityChange(
+      previousUserId: previous,
+      newUserId: next,
+      currentSource: sm.samplingSource,
+      pending: _pendingUserSampling,
+    )) {
+      sm.rotateSession();
+    }
+  }
+
+  /// Forwards an identity change to the native owner, then re-reads its
+  /// session so the Dart gate follows a rotation the owner made.
+  static Future<void> _forwardIdentityChange(
+    Future<void> Function() call,
+  ) async {
+    await call();
+    await refreshSessionIdentity();
   }
 
   /// Set session-scoped attributes attached to every subsequent span,
@@ -1806,6 +1971,8 @@ class ScoutFlutter {
       if (_deviceOrientation != 'unknown')
         'device.orientation': _deviceOrientation,
       if (_sessionManager != null) 'session.id': _sessionManager!.sessionId,
+      if (_sessionManager != null)
+        'session.sampling_source': _sessionManager!.samplingSource,
       if (_sessionManager != null)
         'session.start_time':
             _sessionManager!.sessionStartTime.toUtc().toIso8601String(),
@@ -1921,6 +2088,10 @@ class ScoutFlutter {
 
       final logAttrs = <String, Object>{
         'session.id': _sessionManager?.sessionId ?? '',
+        if (_sessionManager != null)
+          'session.sampling_source': _sessionManager!.samplingSource,
+        if (_sessionManager != null && !_sessionManager!.isSampled)
+          'session.sampled': 'false',
         if (_currentScreenName != null) 'screen.name': _currentScreenName!,
         ..._userAttributes,
         ..._sessionAttributes,
@@ -2049,6 +2220,9 @@ class ScoutFlutter {
     _connectivityType = 'unknown';
     _networkSubtype = '';
     _sessionManager = null;
+    _pendingUserSampling = null;
+    _userSamplingFile = null;
+    _userSamplingSetAtRuntime = false;
     _nativeIdentity = null;
     _identityResolved = null;
     _delegating = false;

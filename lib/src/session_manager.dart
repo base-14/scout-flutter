@@ -3,6 +3,31 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+/// Where a session's sampling decision came from: `'user'` when the app
+/// supplied a per-user value (`userSampling`), `'fallback'` when the
+/// per-session `sessionSampleRate` roll decided.
+const kSamplingSourceUser = 'user';
+const kSamplingSourceFallback = 'fallback';
+
+/// Whether a user change should end the current session and start a new one,
+/// so the next user never inherits the previous user's sampling decision.
+///
+/// Going from anonymous to the first id keeps the session, and so does
+/// re-setting the same id. The rotation only happens while user sampling is
+/// "in play": the current session was decided by a user value, or a user
+/// value is pending. Apps that never use the feature therefore see no extra
+/// sessions.
+bool shouldRotateOnIdentityChange({
+  required String? previousUserId,
+  required String? newUserId,
+  required String currentSource,
+  required bool? pending,
+}) {
+  if (previousUserId == null) return false;
+  if (newUserId == previousUserId) return false;
+  return currentSource == kSamplingSourceUser || pending != null;
+}
+
 /// Manages RUM session identity, rotation, and sampling.
 ///
 /// Every span, metric, and log is tagged with [sessionId]. Sessions rotate
@@ -26,9 +51,15 @@ class SessionManager {
 
   final void Function(String sessionId, bool sampled)? _onSessionChanged;
 
+  /// The app-supplied per-user value, read only when a session is created.
+  /// `null` means no opinion, so the [sampleRate] roll decides.
+  final bool? Function() _pendingUserSampling;
+
   String _sessionId;
   bool _isSampled;
+  String _samplingSource = kSamplingSourceFallback;
   bool? _externalSampled;
+  String? _externalSamplingSource;
   DateTime? _backgroundTimestamp;
   late DateTime _sessionStartTime;
   File? _storeFile;
@@ -44,18 +75,22 @@ class SessionManager {
     this.maxDurationMinutes = 0,
     DateTime Function()? clock,
     void Function(String sessionId, bool sampled)? onSessionChanged,
+    bool? Function()? pendingUserSampling,
   }) : assert(sampleRate >= 0.0 && sampleRate <= 100.0),
        assert(maxDurationMinutes >= 0),
        sampleRate = sampleRate.clamp(0.0, 100.0),
        _clock = clock ?? DateTime.now,
        _onSessionChanged = onSessionChanged,
+       _pendingUserSampling = pendingUserSampling ?? _noUserSampling,
        _sessionId = '',
        _isSampled = false {
     _sessionId = _generateUuidV4();
-    _isSampled = _rollSampling();
+    _resolveSampling();
     _sessionStartTime = _clock();
     _onSessionChanged?.call(_sessionId, _isSampled);
   }
+
+  static bool? _noUserSampling() => null;
 
   Future<void> start({required Directory directory}) async {
     try {
@@ -70,6 +105,7 @@ class SessionManager {
         final startedAtMs = data['startedAt'] as int?;
         final lastActiveAtMs = data['lastActiveAt'] as int?;
         final sampled = data['sampled'] as bool?;
+        final source = data['samplingSource'];
         if (id != null &&
             id.isNotEmpty &&
             startedAtMs != null &&
@@ -88,6 +124,11 @@ class SessionManager {
           if (withinIdle && withinLifetime) {
             _sessionId = id;
             _isSampled = sampled;
+            // Records written before user-based sampling carry no source.
+            _samplingSource =
+                source == kSamplingSourceUser
+                    ? kSamplingSourceUser
+                    : kSamplingSourceFallback;
             _sessionStartTime = startedAt;
             _onSessionChanged?.call(_sessionId, _isSampled);
             unawaited(_persist());
@@ -109,6 +150,7 @@ class SessionManager {
         'startedAt': _sessionStartTime.millisecondsSinceEpoch,
         'lastActiveAt': _clock().millisecondsSinceEpoch,
         'sampled': _isSampled,
+        'samplingSource': _samplingSource,
       };
       await f.writeAsString(json.encode(data));
     } catch (_) {}
@@ -129,8 +171,27 @@ class SessionManager {
   /// Whether the current session is sampled.
   bool get isSampled => _externalSampled ?? _isSampled;
 
-  void adoptExternalSampling(bool? sampled) {
+  /// Where the current session's decision came from: [kSamplingSourceUser]
+  /// or [kSamplingSourceFallback]. Follows the native owner when its
+  /// decision was adopted.
+  String get samplingSource {
+    if (_externalSampled != null) {
+      return _externalSamplingSource ?? kSamplingSourceFallback;
+    }
+    return _samplingSource;
+  }
+
+  /// Logs and metrics are dropped only for sessions sampled out by the
+  /// fallback roll. A user-"no" session still sends them; only its spans are
+  /// dropped.
+  bool get allowsLogsAndMetrics =>
+      isSampled || samplingSource == kSamplingSourceUser;
+
+  /// Follows a native owner's decision, which is not persisted here, because
+  /// the owner persists it.
+  void adoptExternalSampling(bool? sampled, {String? samplingSource}) {
     _externalSampled = sampled;
+    _externalSamplingSource = sampled == null ? null : samplingSource;
   }
 
   /// Wall-clock time when the current session started. Rehydrated from
@@ -162,7 +223,7 @@ class SessionManager {
   /// Generates a new session ID and re-rolls the sampling decision.
   void rotateSession() {
     _sessionId = _generateUuidV4();
-    _isSampled = _rollSampling();
+    _resolveSampling();
     _sessionStartTime = _clock();
     _onSessionChanged?.call(_sessionId, _isSampled);
     unawaited(_persist());
@@ -190,6 +251,19 @@ class SessionManager {
         '${hex(bytes[8])}${hex(bytes[9])}-'
         '${hex(bytes[10])}${hex(bytes[11])}${hex(bytes[12])}'
         '${hex(bytes[13])}${hex(bytes[14])}${hex(bytes[15])}';
+  }
+
+  /// Decides the new session: the app's per-user value if one is pending,
+  /// otherwise the [sampleRate] roll. Only called when a session is created.
+  void _resolveSampling() {
+    final user = _pendingUserSampling();
+    if (user != null) {
+      _isSampled = user;
+      _samplingSource = kSamplingSourceUser;
+    } else {
+      _isSampled = _rollSampling();
+      _samplingSource = kSamplingSourceFallback;
+    }
   }
 
   /// Returns `true` if this session should be sampled.

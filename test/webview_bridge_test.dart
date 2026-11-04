@@ -69,6 +69,16 @@ void main() {
       await expectLater(captureShim(), completes);
     });
 
+    test(
+      'passes no decision before a session exists (legacy page behaviour)',
+      () async {
+        mockIdentity(() => null);
+        final js = await captureShim(mode: ScoutWebViewMode.sessionOnly);
+        expect(js, contains('var sampled = null;'));
+        expect(js, contains("typeof sampled === 'boolean'"));
+      },
+    );
+
     test('ScoutFlutter.sessionId reports the id the exporter stamps', () async {
       mockIdentity(
         () => {'sessionId': 'native-session', 'anonymousId': 'native-anon'},
@@ -133,26 +143,25 @@ void main() {
   });
 
   group('injectShim — re-injection', () {
-    test('keys the sentinel on the session id, not a bare boolean', () async {
-      final js = await captureShim();
-      expect(
-        js,
-        contains('window.__SCOUT_WEBVIEW_BRIDGED === nativeSessionId'),
-      );
-      expect(js, contains('window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;'));
-      // A plain `if (flag) return` would pin the page to a stale session.
-      expect(
-        js,
-        isNot(contains('if (window.__SCOUT_WEBVIEW_BRIDGED) return;')),
-      );
-    });
+    test(
+      'keys the sentinel on session id + decision, not a bare boolean',
+      () async {
+        final js = await captureShim();
+        expect(js, contains("var bindKey = nativeSessionId + '|' + sampled;"));
+        expect(js, contains('window.__SCOUT_WEBVIEW_BRIDGED === bindKey'));
+        expect(js, contains('window.__SCOUT_WEBVIEW_BRIDGED = bindKey;'));
+        // A plain `if (flag) return` would pin the page to a stale session.
+        expect(
+          js,
+          isNot(contains('if (window.__SCOUT_WEBVIEW_BRIDGED) return;')),
+        );
+      },
+    );
 
     test('marks the sentinel only after a successful bind', () async {
       final js = await captureShim();
       final bindAt = js.indexOf('S.setWebViewBridge(bridge)');
-      final markAt = js.indexOf(
-        'window.__SCOUT_WEBVIEW_BRIDGED = nativeSessionId;',
-      );
+      final markAt = js.indexOf('window.__SCOUT_WEBVIEW_BRIDGED = bindKey;');
       expect(bindAt, greaterThan(0));
       expect(markAt, greaterThan(bindAt));
     });

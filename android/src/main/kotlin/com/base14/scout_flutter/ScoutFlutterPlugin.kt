@@ -126,6 +126,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                             metricExportIntervalSeconds = call.argument<Int>("metricExportIntervalSeconds")?.takeIf { it > 0 },
                             firstPartyHosts = call.argument<List<String>>("firstPartyHosts") ?: emptyList(),
                             debugLogging = call.argument<Boolean>("debugLogging") ?: false,
+                            userSampling = call.argument<Boolean>("userSampling"),
                         ),
                     )
                 }.isSuccess
@@ -156,6 +157,21 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             }
             "setScreen" -> {
                 io.base14.scout.android.Scout.setScreen(call.argument<String>("name") ?: "")
+                result.success(null)
+            }
+            "setUserSampling" -> {
+                ScoutBridge.setUserSampling(call.argument<Boolean>("value"))
+                result.success(null)
+            }
+            "setUser" -> {
+                io.base14.scout.android.Scout.setUser(
+                    call.argument<String>("id"),
+                    call.argument<Map<String, String>>("attributes") ?: emptyMap(),
+                )
+                result.success(null)
+            }
+            "clearUser" -> {
+                io.base14.scout.android.Scout.clearUser()
                 result.success(null)
             }
             "getTimezone" -> {
@@ -197,6 +213,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             "anonymousId" to ctx.optString("user.anonymous_id"),
         )
         if (ctx.has("session.sampled")) identity["sampled"] = ctx.optBoolean("session.sampled")
+        ctx.optString("session.sampling_source").takeIf { it.isNotEmpty() }?.let { identity["samplingSource"] = it }
         return identity
     }
 

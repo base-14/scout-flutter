@@ -59,7 +59,8 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 metricExportIntervalSeconds: (args?["metricExportIntervalSeconds"] as? Int) ?? -1,
                 firstPartyHosts: (args?["firstPartyHosts"] as? [String]) ?? [],
                 maxOfflineStorageMb: (args?["maxOfflineStorageMb"] as? Int) ?? 5,
-                debugLogging: (args?["debugLogging"] as? Bool) ?? false
+                debugLogging: (args?["debugLogging"] as? Bool) ?? false,
+                userSampling: args?["userSampling"] as? Bool
             )
             engineStarted = true
             result(true)
@@ -96,6 +97,23 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         case "setScreen":
             let name = ((call.arguments as? [String: Any])?["name"] as? String) ?? ""
             ScoutEngine.shared.setScreen(name: name)
+            result(nil)
+
+        case "setUserSampling":
+            // NSNull (Dart null) casts to nil: clear the value.
+            Scout.setUserSampling((call.arguments as? [String: Any])?["value"] as? Bool)
+            result(nil)
+
+        case "setUser":
+            let args = call.arguments as? [String: Any]
+            Scout.setUser(
+                id: args?["id"] as? String,
+                attributes: (args?["attributes"] as? [String: String]) ?? [:]
+            )
+            result(nil)
+
+        case "clearUser":
+            Scout.clearUser()
             result(nil)
 
         case "getTimezone":
@@ -138,6 +156,9 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 ]
                 if let sampled = ctx["session.sampled"] as? Bool {
                     identity["sampled"] = sampled
+                }
+                if let source = ctx["session.sampling_source"] as? String, !source.isEmpty {
+                    identity["samplingSource"] = source
                 }
                 result(identity)
             } else {
