@@ -100,6 +100,13 @@ class ScoutFlutter {
     alwaysCaptureErrors: true,
   );
   static scout_log.ScoutLogger? _logger;
+
+  /// Logs emitted after [initialize] but before the bootstrap has built the
+  /// logging pipeline. [isInitialized] turns true before the logger exists,
+  /// so without this buffer an app's first log lines were silently dropped.
+  /// Replayed through the normal path once the logger is ready.
+  static List<scout_log.ScoutLogEntry>? _earlyLogs;
+  static const _kEarlyLogCap = 500;
   static FixedHttpLogExporter? _logExporter;
   static ScoutLogBatcher? _logBatcher;
   static OfflineQueue? _offlineQueue;
@@ -362,6 +369,7 @@ class ScoutFlutter {
       _setupErrorHandlers();
     }
     _identityResolved ??= Completer<void>();
+    if (config.enableLogging && _logger == null) _earlyLogs ??= [];
     unawaited(_bootstrap(config));
   }
 
@@ -804,6 +812,9 @@ class ScoutFlutter {
         maxQueueSize: config.maxQueueSize,
       )..start();
       _logger = scout_log.ScoutLogger(onLog: _onLogEntry);
+      final early = _earlyLogs;
+      _earlyLogs = null;
+      early?.forEach(_onLogEntry);
 
       // Capture debugPrint() as info-level logs
       if (config.capturePrintStatements) {
@@ -2041,7 +2052,22 @@ class ScoutFlutter {
     String message, {
     Map<String, Object>? attributes,
   }) {
-    _logger?.log(level, message, attributes: attributes);
+    final logger = _logger;
+    if (logger != null) {
+      logger.log(level, message, attributes: attributes);
+      return;
+    }
+    final early = _earlyLogs;
+    if (early != null && early.length < _kEarlyLogCap) {
+      early.add(
+        scout_log.ScoutLogEntry(
+          level: level,
+          message: message,
+          timestamp: DateTime.now(),
+          attributes: attributes,
+        ),
+      );
+    }
   }
 
   static void logDebug(String message, {Map<String, Object>? attributes}) =>
@@ -2246,6 +2272,7 @@ class ScoutFlutter {
       alwaysCaptureErrors: true,
     );
     _logger = null;
+    _earlyLogs = null;
     _logBatcher?.stop();
     _logBatcher = null;
     _logExporter = null;

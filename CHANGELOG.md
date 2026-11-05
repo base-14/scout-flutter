@@ -31,6 +31,11 @@
   user-sampling API.
 
 ### Fixed
+- **Logs emitted right after `initialize` are no longer dropped.**
+  `initialize()` returns before the bootstrap has built the logging
+  pipeline, and `isInitialized` turned true before the logger existed, so
+  an app's first log lines were silently lost. They are now buffered (up to
+  500) and exported once logging is ready.
 - **A user set right after `initialize` now reaches the native owner.** In
   delegated mode, `setUser` called before the native bootstrap settled (the
   usual way to restore the signed-in user at launch) stayed in the Dart

@@ -159,6 +159,23 @@ void main() {
     expect(File('${docs.path}/scout_user_sampling').existsSync(), isFalse);
   });
 
+  test(
+    'standalone: logs emitted while initialize is still bootstrapping are kept',
+    () async {
+      messenger.setMockMethodCallHandler(native, (call) async {
+        if (call.method == 'initNativeDelegate') return false;
+        return null;
+      });
+      // initialize() returns before the bootstrap has built the logging
+      // pipeline, so this log always lands in that window.
+      ScoutFlutter.initialize(config: config());
+      ScoutFlutter.logInfo('early', attributes: {'marker': 'early'});
+      await initialized();
+      await backend.awaitLog('early');
+      expect(backend.log('early')['session.sampling_source'], 'fallback');
+    },
+  );
+
   test('standalone: the stored value decides the next launch', () async {
     messenger.setMockMethodCallHandler(native, (call) async {
       if (call.method == 'initNativeDelegate') return false;
