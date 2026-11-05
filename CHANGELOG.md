@@ -1,3 +1,43 @@
+## Unreleased
+
+### Added
+- **User-based sampling: `userSampling` / `ScoutFlutter.setUserSampling()`.**
+  Previously every session was sampled independently, so one user ended up
+  with some sessions kept and others dropped. Your app can now decide per
+  user, typically from its own remote config: `true` keeps all of that user's
+  sessions, `false` drops their spans, and `null` (the default) keeps today's
+  roll at `sessionSampleRate`.
+  - The value is decided once per session, applies from the next session
+    start, and is persisted.
+  - A "no" user still sends logs and metrics, and error-class spans still
+    pass while `alwaysCaptureErrors` is on.
+  - `clearUser()` resets the value. While user sampling is in play,
+    `clearUser()` and `setUser()` with a different id start a new session.
+  - Spans and logs carry `session.sampling_source` (`user` | `fallback`).
+    `ScoutFlutter.sessionSamplingDecision` exposes the current decision.
+- **Hybrid apps forward user sampling and identity to the native owner.** In
+  delegated mode, `setUserSampling`, `setUser` and `clearUser` reach the
+  native engine, which owns the session and decides. Flutter then follows the
+  engine's new decision. As a side effect, native spans now carry the Flutter
+  layer's `user.id`.
+- **WebView pages follow the host's sampling decision.**
+  `ScoutWebViewBridge.injectShim` passes `sampled` and `samplingSource` to the
+  page, so a user-"no" session also stops the page's spans in session-only
+  mode (requires scout-react ≥ 0.1.22 on the page). The shim re-binds when the
+  decision changes, not only when the session id does.
+
+### Changed
+- **Native pins: scout-android 0.1.12 and scout-ios 0.1.12,** which add the
+  user-sampling API.
+
+### Fixed
+- **A user set right after `initialize` now reaches the native owner.** In
+  delegated mode, `setUser` called before the native bootstrap settled (the
+  usual way to restore the signed-in user at launch) stayed in the Dart
+  layer, so a later `clearUser()` did not start a new session. The identity,
+  and a runtime `null` user-sampling value, are now forwarded once delegation
+  is established.
+
 ## 0.3.3
 
 ### Fixed

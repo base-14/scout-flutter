@@ -153,6 +153,15 @@ class ScoutFlutterConfig {
   /// telemetry.
   final bool alwaysCaptureErrors;
 
+  /// Per-user sampling decided by your app, typically from your own remote
+  /// config or feature flags. `true` keeps this user's sessions, `false`
+  /// drops their spans (logs and metrics still flow), and `null` (default)
+  /// falls back to [sessionSampleRate]. Pass the last-known value here at
+  /// startup; it applies from the next session start, is persisted, and can
+  /// be updated with `ScoutFlutter.setUserSampling`. A `null` keeps the
+  /// stored value.
+  final bool? userSampling;
+
   /// Minutes of inactivity before rotating the session. Default 30.
   final int sessionTimeoutMinutes;
 
@@ -228,6 +237,7 @@ class ScoutFlutterConfig {
     this.firstPartyHosts,
     double sessionSampleRate = 1.0,
     this.alwaysCaptureErrors = true,
+    this.userSampling,
     this.sessionTimeoutMinutes = 30,
     int maxSessionDurationMinutes = 60,
     this.enableLogging = true,

@@ -94,6 +94,23 @@ class HomeScreen extends StatelessWidget {
             child: const Text('Set User Identity'),
           ),
           const SizedBox(height: 12),
+          TextButton(
+            onPressed: () {
+              // In a real app this value comes from your remote config.
+              // It applies from the next session start.
+              final next = ScoutFlutter.userSampling == false ? null : false;
+              ScoutFlutter.setUserSampling(next);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'userSampling=$next (applies at next session start)',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Toggle User Sampling (no / default)'),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               const Text('Icon button: '),

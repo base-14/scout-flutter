@@ -234,7 +234,14 @@ class ScoutPlatformChannel {
   /// exported span, or null when no engine is running (web/desktop, or
   /// native delegation failed). In delegating mode these — not the
   /// Dart-side `SessionManager` ids — are what the backend sees.
-  static Future<({String sessionId, String anonymousId, bool? sampled})?>
+  static Future<
+    ({
+      String sessionId,
+      String anonymousId,
+      bool? sampled,
+      String? samplingSource,
+    })?
+  >
   getSessionIdentity() async {
     try {
       final r = await _channel.invokeMapMethod<String, dynamic>(
@@ -244,10 +251,12 @@ class ScoutPlatformChannel {
       if (sessionId is! String || sessionId.isEmpty) return null;
       final anonymousId = r?['anonymousId'];
       final sampled = r?['sampled'];
+      final source = r?['samplingSource'];
       return (
         sessionId: sessionId,
         anonymousId: anonymousId is String ? anonymousId : '',
         sampled: sampled is bool ? sampled : null,
+        samplingSource: source is String && source.isNotEmpty ? source : null,
       );
     } catch (_) {
       return null;
@@ -274,6 +283,34 @@ class ScoutPlatformChannel {
   static Future<void> setScreen(String name) async {
     try {
       await _channel.invokeMethod('setScreen', {'name': name});
+    } catch (_) {}
+  }
+
+  /// Forwards the app's per-user sampling value to the native session owner,
+  /// which applies it from its next session start.
+  static Future<void> setUserSampling(bool? value) async {
+    try {
+      await _channel.invokeMethod('setUserSampling', {'value': value});
+    } catch (_) {}
+  }
+
+  /// Forwards the user to the native owner, which rotates its session on a
+  /// user switch while user sampling is in play.
+  static Future<void> setUser({
+    required String? id,
+    Map<String, String> attributes = const {},
+  }) async {
+    try {
+      await _channel.invokeMethod('setUser', {
+        'id': id,
+        'attributes': attributes,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> clearUser() async {
+    try {
+      await _channel.invokeMethod('clearUser');
     } catch (_) {}
   }
 

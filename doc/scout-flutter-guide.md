@@ -277,6 +277,10 @@ ScoutFlutterConfig(
   // applies to ALL signals: spans, metrics, and logs. An unsampled
   // session sends nothing (errors/crashes bypass by default).
   sessionSampleRate: 100.0,                  // 0.0 to 100.0
+  userSampling: null,                        // Per-user override from your remote config:
+                                             // true keeps, false drops spans (logs and metrics
+                                             // still flow), null uses sessionSampleRate.
+                                             // Next session start; ScoutFlutter.setUserSampling()
   sessionTimeoutMinutes: 30,                 // Rotate after inactivity
 
   // Network
