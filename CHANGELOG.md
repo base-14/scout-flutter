@@ -30,6 +30,14 @@
 - **Native pins: scout-android 0.1.12 and scout-ios 0.1.12,** which add the
   user-sampling API.
 
+### Fixed
+- **A user set right after `initialize` now reaches the native owner.** In
+  delegated mode, `setUser` called before the native bootstrap settled (the
+  usual way to restore the signed-in user at launch) stayed in the Dart
+  layer, so a later `clearUser()` did not start a new session. The identity,
+  and a runtime `null` user-sampling value, are now forwarded once delegation
+  is established.
+
 ## 0.3.3
 
 ### Fixed

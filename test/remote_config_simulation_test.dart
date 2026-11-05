@@ -223,6 +223,34 @@ void main() {
     },
   );
 
+  test(
+    'hybrid: a user restored right after initialize reaches the owner',
+    () async {
+      // Relaunch of a signed-in "no" user: the owner resumes her
+      // user-decided session, and the app restores the user at startup,
+      // before the delegation bootstrap has settled.
+      final owner =
+          _FakeNativeOwner()
+            ..sampled = false
+            ..source = 'user'
+            ..stored = false;
+      messenger.setMockMethodCallHandler(native, owner.handle);
+      ScoutFlutter.initialize(config: config(userSampling: false));
+      ScoutFlutter.setUser(id: 'alice');
+      await initialized();
+      expect(owner.userId, 'alice');
+      expect(owner.rotations, 0, reason: 'restoring the user is no switch');
+
+      ScoutFlutter.clearUser();
+      await pumpChannel();
+      expect(owner.rotations, 1, reason: 'logout leaves the "no" session');
+      expect(ScoutFlutter.sessionSamplingDecision, (
+        sampled: true,
+        source: 'fallback',
+      ));
+    },
+  );
+
   test('hybrid: a non-null init value reaches the owner both ways', () async {
     final owner = _FakeNativeOwner();
     messenger.setMockMethodCallHandler(native, owner.handle);

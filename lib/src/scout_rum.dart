@@ -510,8 +510,23 @@ class ScoutFlutter {
     if (_delegating) {
       // A host app's native owner may have started its session before this
       // layer existed; forwarding hands it the value for its next session.
-      if (_pendingUserSampling != null) {
+      // A runtime null (setUserSampling(null) / clearUser) is forwarded too,
+      // so the owner drops a value it stored on an earlier launch.
+      if (_pendingUserSampling != null || _userSamplingSetAtRuntime) {
         await ScoutPlatformChannel.setUserSampling(_pendingUserSampling);
+      }
+      // setUser calls made before delegation settled (apps restore the
+      // signed-in user right after initialize) only reached this layer.
+      // Hand the identity to the owner so its rotation rule sees it.
+      final id = userId;
+      if (id != null) {
+        await ScoutPlatformChannel.setUser(
+          id: id,
+          attributes: {
+            for (final e in _userAttributes.entries)
+              if (e.key != 'user.id') e.key: e.value.toString(),
+          },
+        );
       }
       final native = await ScoutPlatformChannel.getSessionIdentity();
       if (native != null) _adoptNativeIdentity(native);
