@@ -281,6 +281,9 @@ ScoutFlutterConfig(
                                              // true keeps, false drops spans (logs and metrics
                                              // still flow), null uses sessionSampleRate.
                                              // Next session start; ScoutFlutter.setUserSampling()
+  enabled: true,                             // RUM kill switch for this launch (not persisted).
+                                             // false: nothing leaves the device, no session.
+                                             // Flip at runtime: ScoutFlutter.setEnabled()
   sessionTimeoutMinutes: 30,                 // Rotate after inactivity
 
   // Network

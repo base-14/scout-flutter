@@ -105,6 +105,53 @@ ScoutFlutter.setUserSampling(null);  // no opinion: fall back to sessionSampleRa
 - **Verify in Scout.** Spans and logs carry `session.sampling_source` = `user` | `fallback`. `ScoutFlutter.sessionSamplingDecision` returns the current decision in-app.
 - **Not a kill switch.** The SDK keeps running for a "no" user; only their spans stop.
 
+## Turning RUM off at runtime
+
+`setUserSampling(false)` is not a kill switch: it applies from the next session and logs and metrics keep flowing. To turn RUM off completely, for example outside your users' working hours, pass `enabled` at init and flip it with `ScoutFlutter.setEnabled` when your schedule says so.
+
+```dart
+// Your app owns the schedule (cached from your backend). RUM runs from one
+// hour before the shift starts until it ends.
+bool rumWindow(DateTime now, Shift shift) =>
+    now.isAfter(shift.start.subtract(const Duration(hours: 1))) &&
+    now.isBefore(shift.end);
+
+Future<void> main() async {
+  final shift = await ShiftCache.read(); // local, no network
+  ScoutFlutter.initialize(
+    config: ScoutFlutterConfig(
+      serviceName: 'my-app',
+      endpoint: '…',
+      // A WorkManager wake-up at 03:00 runs main() too: with enabled false it
+      // sends nothing and counts no session.
+      enabled: rumWindow(DateTime.now(), shift),
+    ),
+  );
+  runApp(const MyApp());
+
+  // The process may stay alive into the window (or out of it).
+  Timer.periodic(const Duration(minutes: 1), (_) {
+    ScoutFlutter.setEnabled(rumWindow(DateTime.now(), shift));
+  });
+}
+```
+
+While disabled (`ScoutFlutter.isEnabled == false`):
+
+- **Nothing leaves the device.** No spans, logs, metrics or crash reports, errors included (`alwaysCaptureErrors` does not apply). No OTLP request is made, and the native engine stops too.
+- **Nothing is buffered for later.** Telemetry produced while disabled is discarded, not queued or written to the offline buffer.
+- **No session.** A launch that starts disabled does not create, resume or extend a session, and emits no app-start or lifecycle telemetry. `ScoutFlutter.sessionId` is `null`.
+- **Crashes are never reported later.** A crash, ANR or native crash while disabled is not replayed on a later launch. A crash from an earlier *enabled* run is kept until the next enabled point (a later `setEnabled(true)` or an enabled launch) and reported then.
+
+Transitions:
+
+- **`setEnabled(false)`** flushes what was recorded while enabled (best effort), then ends the session. Spans still open at that moment are dropped.
+- **`setEnabled(true)`** always starts a new session, sampled like any new session (`userSampling` if set, else `sessionSampleRate`). Startup metrics are not re-measured for that process.
+- Calling it with the current state does nothing. A call before `initialize` wins over the config value. Nothing is persisted: each launch takes the value you pass.
+- `setUser`, `setUserSampling` and session attributes set while disabled are kept and apply once enabled.
+- **Hybrid apps.** The value is passed to the native engine and `setEnabled` is forwarded to it, so both layers go silent. Flutter follows the native owner's new session on enable.
+- **Not yet covered:** pages in `ScoutWebViewBridge` WebViews keep their own state, and each Android process takes its own `enabled` from its own config.
+
 ## Export cadence
 
 All three signals share one batching model, governed by four knobs:
@@ -124,6 +171,7 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 
 ```
 [scout] init ok (service=my-app endpoint=http://localhost:4318 v=1.0.0 sampleRate=1.0 alwaysCaptureErrors=true)
+[scout] enabled=true (init)
 [scout] session a1b2c3 sampled=true source=fallback
 [scout] userSampling=false (applies at next session start)
 [scout] span screen_view → recordAndSample
@@ -144,6 +192,7 @@ Set `debugLogging: true` to print a `[scout]` line for every init, session rotat
 - `ScoutFlutter.reportError(error, stackTrace)` — manual error reporting
 - `ScoutFlutter.setUser(id: ..., attributes: ...)` / `clearUser()` — user identity
 - `ScoutFlutter.setUserSampling(bool?)` / `userSampling` config — per-user sampling from your remote config (see [User-based sampling](#user-based-sampling))
+- `ScoutFlutter.setEnabled(bool)` / `isEnabled` / `enabled` config — runtime RUM kill switch (see [Turning RUM off at runtime](#turning-rum-off-at-runtime))
 - `ScoutFlutter.sessionSamplingDecision` — the current session's `sampled` flag and its source (`user` | `fallback`)
 - `ScoutFlutter.setSessionAttributes({...})` / `clearSessionAttributes()` — session-scoped attributes
 - `RumUserActionAnnotation` — custom tap labels for non-standard widgets

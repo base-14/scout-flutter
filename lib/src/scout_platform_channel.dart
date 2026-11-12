@@ -294,6 +294,16 @@ class ScoutPlatformChannel {
     } catch (_) {}
   }
 
+  /// Forwards the RUM kill switch to the native engine (which flushes and
+  /// ends its session on disable, and starts a fresh one on enable) and to
+  /// the plugin's crash reporter, so crashes while disabled are never
+  /// replayed.
+  static Future<void> setEnabled(bool value) async {
+    try {
+      await _channel.invokeMethod('setEnabled', {'value': value});
+    } catch (_) {}
+  }
+
   /// Forwards the user to the native owner, which rotates its session on a
   /// user switch while user sampling is in play.
   static Future<void> setUser({

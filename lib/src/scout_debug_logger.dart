@@ -39,6 +39,12 @@ class ScoutDebugLogger {
     debugPrint('$_prefix userSampling=$value (applies at next session start)');
   }
 
+  /// RUM kill switch state, at init and on every transition.
+  void rumEnabled(bool value, {required String reason}) {
+    if (!enabled) return;
+    debugPrint('$_prefix enabled=$value ($reason)');
+  }
+
   void sample({required String name, required String decision}) {
     if (!enabled) return;
     debugPrint('$_prefix span $name → $decision');

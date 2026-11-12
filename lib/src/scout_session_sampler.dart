@@ -16,12 +16,20 @@ class ScoutSessionSampler implements Sampler {
   final bool alwaysCaptureErrors;
   final ScoutDebugLogger? _logger;
 
+  /// RUM kill switch. While it returns false every span is dropped, errors
+  /// included, so custom spans from `ScoutFlutter.tracer` stop too.
+  final bool Function() _enabledResolver;
+
   ScoutSessionSampler({
     required SessionManager? Function() sessionResolver,
     required this.alwaysCaptureErrors,
     ScoutDebugLogger? logger,
+    bool Function()? enabledResolver,
   }) : _sessionResolver = sessionResolver,
-       _logger = logger;
+       _logger = logger,
+       _enabledResolver = enabledResolver ?? _alwaysEnabled;
+
+  static bool _alwaysEnabled() => true;
 
   @override
   String get description => 'ScoutSessionSampler';
@@ -35,6 +43,13 @@ class ScoutSessionSampler implements Sampler {
     required Attributes? attributes,
     required List<SpanLink>? links,
   }) {
+    if (!_enabledResolver()) {
+      _logger?.sample(name: name, decision: 'drop (disabled)');
+      return const SamplingResult(
+        decision: SamplingDecision.drop,
+        source: SamplingDecisionSource.tracerConfig,
+      );
+    }
     if (alwaysCaptureErrors && kErrorClassSpans.contains(name)) {
       _logger?.sample(name: name, decision: 'recordAndSample (error bypass)');
       return const SamplingResult(

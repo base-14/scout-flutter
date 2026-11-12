@@ -11,14 +11,22 @@ import 'session_manager.dart';
 /// spans and error-level logs bypass the gate when [alwaysCaptureErrors]
 /// is set, even without a session, so crashes during initialization are
 /// never lost.
+///
+/// While RUM is disabled ([enabledResolver] returns false) everything is
+/// dropped, errors included: the kill switch overrides
+/// [alwaysCaptureErrors].
 class ScoutSampleGate {
   final SessionManager? Function() sessionResolver;
   final bool alwaysCaptureErrors;
+  final bool Function() enabledResolver;
 
   const ScoutSampleGate({
     required this.sessionResolver,
     required this.alwaysCaptureErrors,
+    this.enabledResolver = _alwaysEnabled,
   });
+
+  static bool _alwaysEnabled() => true;
 
   bool _sessionSampled() => sessionResolver()?.isSampled ?? false;
 
@@ -29,17 +37,19 @@ class ScoutSampleGate {
 
   /// Whether a span with [name] should be recorded and exported.
   bool shouldSampleSpan(String name) {
+    if (!enabledResolver()) return false;
     if (alwaysCaptureErrors && kErrorClassSpans.contains(name)) return true;
     return _sessionSampled();
   }
 
   /// Whether metric data points should be recorded.
-  bool shouldSampleMetric() => _logsAndMetricsAllowed();
+  bool shouldSampleMetric() => enabledResolver() && _logsAndMetricsAllowed();
 
   /// Whether a log entry should be exported. [isError] marks
   /// error-severity entries, which bypass sampling when
   /// [alwaysCaptureErrors] is set.
   bool shouldSampleLog({required bool isError}) {
+    if (!enabledResolver()) return false;
     if (alwaysCaptureErrors && isError) return true;
     return _logsAndMetricsAllowed();
   }

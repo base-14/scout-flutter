@@ -88,6 +88,16 @@ class CrashDetector {
     });
   }
 
+  /// Removes the marker: the session ended on purpose (RUM was disabled),
+  /// so whatever happens to the process next is never reported as a crash
+  /// of this session on a later launch.
+  Future<void> markSessionEnded() async {
+    try {
+      final file = _markerFile;
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// Updates the marker to "paused" — indicates a clean background transition.
   Future<void> markSessionPaused() async {
     await _updateStatus('paused');

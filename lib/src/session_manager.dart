@@ -64,6 +64,13 @@ class SessionManager {
   late DateTime _sessionStartTime;
   File? _storeFile;
 
+  /// Set by [end]. An ended session never writes its record again.
+  bool _ended = false;
+
+  /// The latest persist write, so [end] can wait for it before deleting
+  /// the record.
+  Future<void> _lastWrite = Future<void>.value();
+
   /// Creates a [SessionManager].
   ///
   /// [sampleRate] must be between 0.0 and 100.0 inclusive.
@@ -92,13 +99,18 @@ class SessionManager {
 
   static bool? _noUserSampling() => null;
 
-  Future<void> start({required Directory directory}) async {
+  /// Binds the session to its on-disk record. With [resume] (the default)
+  /// a persisted session that is still within its idle and lifetime limits
+  /// is adopted; with `resume: false` the freshly minted session is kept and
+  /// overwrites the record (used when RUM is re-enabled at runtime, which
+  /// always starts a new session).
+  Future<void> start({required Directory directory, bool resume = true}) async {
     try {
       if (!await directory.exists()) {
         await directory.create(recursive: true);
       }
       _storeFile = File('${directory.path}/scout_session.json');
-      if (await _storeFile!.exists()) {
+      if (resume && await _storeFile!.exists()) {
         final raw = await _storeFile!.readAsString();
         final data = json.decode(raw) as Map<String, dynamic>;
         final id = data['id'] as String?;
@@ -140,9 +152,11 @@ class SessionManager {
     unawaited(_persist());
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _lastWrite = _write();
+
+  Future<void> _write() async {
     final f = _storeFile;
-    if (f == null) return;
+    if (f == null || _ended) return;
     try {
       final data = <String, Object>{
         'v': 1,
@@ -155,6 +169,27 @@ class SessionManager {
       await f.writeAsString(json.encode(data));
     } catch (_) {}
   }
+
+  /// Ends this session for good (RUM was disabled): nothing is persisted
+  /// afterwards and the on-disk record is removed, so neither a later
+  /// launch nor a later [start] can resume it. A record that already
+  /// belongs to a newer session is left alone.
+  Future<void> end() async {
+    _ended = true;
+    try {
+      await _lastWrite;
+    } catch (_) {}
+    final f = _storeFile;
+    if (f == null) return;
+    try {
+      if (!await f.exists()) return;
+      final data = json.decode(await f.readAsString()) as Map<String, dynamic>;
+      if (data['id'] == _sessionId) await f.delete();
+    } catch (_) {}
+  }
+
+  /// Whether [end] was called.
+  bool get isEnded => _ended;
 
   /// The current session ID (UUID v4). When [maxDurationMinutes] is `> 0`,
   /// reading this getter rotates the session if it has lived longer than the
