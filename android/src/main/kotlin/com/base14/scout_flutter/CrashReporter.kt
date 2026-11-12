@@ -33,10 +33,20 @@ object CrashReporter {
     private const val PREF_BG_SINCE_LAST_CRASH = "bg_secs_since_last_crash"
     private const val PREF_APP_UUID = "app_uuid"
 
+    /// Epoch ms at which RUM went disabled; present until the next enabled
+    /// point. Reports written at or after it happened while disabled and are
+    /// never replayed. The earliest value is kept across disabled launches.
+    private const val DISABLED_SINCE_FILE = "disabled_since"
+
     private var crashDir: File? = null
     private var previousHandler: Thread.UncaughtExceptionHandler? = null
     private var installed = false
     private var nativeAvailable = false
+
+    /// RUM kill switch. Starts as the previous launch left it (a pending
+    /// disabled_since file means disabled), until Dart applies this launch's
+    /// value via [setEnabled].
+    @Volatile private var enabled = true
 
     private var sessionsSinceLaunch = 0
     private var launchesSinceLastCrash = 0
@@ -55,6 +65,9 @@ object CrashReporter {
         appContext = context.applicationContext
 
         crashDir = File(context.cacheDir, CRASH_DIR_NAME).also { it.mkdirs() }
+        // A crash in an earlier, disabled process must never be replayed.
+        purgeDisabledPeriodReports()
+        enabled = disabledSinceMs() == null
 
         previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -300,9 +313,48 @@ object CrashReporter {
         pushActivityTimers()
     }
 
+    /// Applies the RUM kill switch. Disabling records when it started (JVM
+    /// crashes are then not written at all; native signal-handler reports
+    /// still land on disk and are purged by timestamp). Enabling purges every
+    /// report from the disabled period, then clears the marker, so only
+    /// crashes from enabled runs are ever replayed.
+    fun setEnabled(value: Boolean) {
+        enabled = value
+        val dir = crashDir ?: return
+        val flag = File(dir, DISABLED_SINCE_FILE)
+        try {
+            if (!value) {
+                if (!flag.exists()) flag.writeText(System.currentTimeMillis().toString())
+            } else {
+                purgeDisabledPeriodReports()
+                flag.delete()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun disabledSinceMs(): Long? {
+        val flag = crashDir?.let { File(it, DISABLED_SINCE_FILE) } ?: return null
+        if (!flag.exists()) return null
+        return try { flag.readText().trim().toLong() } catch (_: Exception) { 0L }
+    }
+
+    private fun isFromDisabledPeriod(file: File, disabledSince: Long?): Boolean =
+        disabledSince != null && file.lastModified() >= disabledSince
+
+    private fun purgeDisabledPeriodReports() {
+        val dir = crashDir ?: return
+        val since = disabledSinceMs() ?: return
+        try {
+            dir.listFiles { file -> file.name.startsWith(CRASH_FILE_PREFIX) }
+                ?.filter { isFromDisabledPeriod(it, since) }
+                ?.forEach { it.delete() }
+        } catch (_: Exception) {}
+    }
+
     fun getPendingCrashReports(): List<Map<String, Any>> {
         val dir = crashDir ?: return emptyList()
         if (!dir.exists()) return emptyList()
+        val disabledSince = disabledSinceMs()
 
         val stringKeys = arrayOf(
             "crash_type", "crash_reason", "crash_timestamp", "crash_thread_name",
@@ -342,6 +394,10 @@ object CrashReporter {
         val nativeLibDir = appContext?.applicationInfo?.nativeLibraryDir
 
         for (file in files.sortedBy { it.lastModified() }) {
+            if (isFromDisabledPeriod(file, disabledSince)) {
+                file.delete()
+                continue
+            }
             try {
                 val json = JSONObject(file.readText())
                 val report = mutableMapOf<String, Any>()
@@ -398,6 +454,8 @@ object CrashReporter {
     }
 
     private fun writeCrashReport(thread: Thread, throwable: Throwable) {
+        // Disabled: never persisted, so never replayed on a later launch.
+        if (!enabled) return
         try {
             val dir = crashDir ?: return
             val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())

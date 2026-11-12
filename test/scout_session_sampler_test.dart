@@ -110,5 +110,27 @@ void main() {
         SamplingDecision.recordAndSample,
       );
     });
+
+    test('drops every span, errors included, while RUM is disabled', () {
+      final sm = SessionManager(sampleRate: 100, timeoutMinutes: 30);
+      var enabled = true;
+      final sampler = ScoutSessionSampler(
+        sessionResolver: () => sm,
+        alwaysCaptureErrors: true,
+        enabledResolver: () => enabled,
+      );
+      expect(
+        _shouldSample(sampler, 'error').decision,
+        SamplingDecision.recordAndSample,
+      );
+      enabled = false;
+      for (final name in [...kErrorClassSpans, 'screen_view']) {
+        expect(
+          _shouldSample(sampler, name).decision,
+          SamplingDecision.drop,
+          reason: name,
+        );
+      }
+    });
   });
 }

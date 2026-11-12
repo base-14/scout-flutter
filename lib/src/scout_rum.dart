@@ -26,6 +26,7 @@ import 'offline_queue.dart';
 import 'scout_debug_logger.dart';
 import 'scout_debug_span_exporter.dart';
 import 'scout_dio_interceptor.dart';
+import 'scout_enabled_gate.dart';
 import 'scout_http_overrides.dart';
 import 'scope.dart';
 import 'scout_log_batcher.dart';
@@ -93,6 +94,40 @@ class ScoutFlutter {
   /// Set once [setUserSampling] runs, so init-time hydration never overwrites
   /// a newer runtime value.
   static bool _userSamplingSetAtRuntime = false;
+
+  /// RUM kill switch. Every emit path, the sampler, the span processor and
+  /// the metric exporter read it, so flipping it stops all signals at once.
+  /// Not persisted: each launch takes it from [ScoutFlutterConfig.enabled]
+  /// unless [setEnabled] ran before [initialize].
+  static bool _enabled = true;
+
+  /// Set once [setEnabled] runs, so a pre-init call wins over the config.
+  static bool _enabledSetAtRuntime = false;
+
+  /// Set by [initialize]; before that [setEnabled] only records the value.
+  static bool _initializeCalled = false;
+
+  /// Set when the bootstrap has applied the launch state and built the
+  /// pipeline; from then on [setEnabled] runs the full transition.
+  static bool _coreReady = false;
+
+  /// Transitions run one after another, in call order.
+  static Future<void> _transitions = Future<void>.value();
+
+  /// The launch started disabled, so the previous launch's crash marker and
+  /// the native crash reports were left in place for the first enabled
+  /// point of this process.
+  static bool _crashChecksPending = false;
+
+  /// Epoch ms at which RUM went disabled, persisted until the next enabled
+  /// point (`scout_disabled_since`). Exit-info deaths at or after it
+  /// happened while disabled and are never reported.
+  static int? _disabledSinceMs;
+  static File? _disabledSinceFile;
+  static Directory? _docsDir;
+  static EnabledGatedSpanProcessor? _spanProcessor;
+  static EnabledGatedMetricExporter? _metricExporter;
+  static MetricReader? _metricReader;
   // Fail-closed default so nothing can leak before initialize() wires
   // the real gate; error-class telemetry still bypasses it.
   static ScoutSampleGate _sampleGate = ScoutSampleGate(
@@ -207,9 +242,14 @@ class ScoutFlutter {
   /// Elsewhere it is the Dart `SessionManager` id. Null until
   /// [initialize]'s asynchronous bootstrap has settled which of the two
   /// applies — await [refreshSessionIdentity] to block on that.
-  static String? get sessionId =>
-      _nativeIdentity?.sessionId ??
-      (_isIdentityResolved ? _sessionManager?.sessionId : null);
+  ///
+  /// Null while RUM is disabled ([isEnabled] is false): there is no session
+  /// then, and the next [setEnabled] `(true)` starts a new one.
+  static String? get sessionId {
+    if (!_enabled) return null;
+    return _nativeIdentity?.sessionId ??
+        (_isIdentityResolved ? _sessionManager?.sessionId : null);
+  }
 
   /// Re-read the session and anonymous ids from the native engine and
   /// return the pair that exported telemetry carries. Waits (up to 5 s)
@@ -223,8 +263,12 @@ class ScoutFlutter {
         await pending.future.timeout(const Duration(seconds: 5));
       } catch (_) {}
     }
-    final native = await ScoutPlatformChannel.getSessionIdentity();
-    if (native != null) _adoptNativeIdentity(native);
+    // While disabled there is no session to follow; the next enable reads
+    // the owner's fresh one.
+    if (_enabled) {
+      final native = await ScoutPlatformChannel.getSessionIdentity();
+      if (native != null && _enabled) _adoptNativeIdentity(native);
+    }
     return (sessionId: sessionId ?? '', anonymousId: anonymousId ?? '');
   }
 
@@ -357,6 +401,10 @@ class ScoutFlutter {
   /// navigatorObservers list.
   static Future<void> initialize({required ScoutFlutterConfig config}) async {
     _appStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
+    // Decided before anything is wired, so even the first error handler
+    // call honours it. A setEnabled() made before initialize wins.
+    if (!_enabledSetAtRuntime) _enabled = config.enabled;
+    _initializeCalled = true;
     WidgetsFlutterBinding.ensureInitialized();
     if (config.enableStartupTracking) {
       // Armed before runApp() so the post-frame callback lands on the
@@ -383,8 +431,11 @@ class ScoutFlutter {
     if (config.enableErrorTracking) {
       _setupErrorHandlers();
     }
+    var bootEnabled = _enabled;
     try {
-      await _initializeCore(config).timeout(const Duration(seconds: 30));
+      bootEnabled = await _initializeCore(
+        config,
+      ).timeout(const Duration(seconds: 30));
     } catch (e) {
       debugPrint('ScoutFlutter: initialization failed or timed out: $e');
       _debugLogger.error('initialization failed or timed out: $e');
@@ -393,6 +444,10 @@ class ScoutFlutter {
       // exporting, so the Dart ids are the ones to report.
       _markIdentityResolved();
     }
+    _coreReady = true;
+    // setEnabled() calls that landed while the bootstrap ran only flipped
+    // the gate; run the transition they asked for now.
+    if (_enabled != bootEnabled) _scheduleTransition(_enabled);
   }
 
   /// Whether a `debugPrint` message may be captured as a log by
@@ -404,7 +459,9 @@ class ScoutFlutter {
   static bool shouldCapturePrint(String message) =>
       !message.startsWith('[scout]');
 
-  static Future<void> _initializeCore(ScoutFlutterConfig config) async {
+  /// Builds the pipeline and returns the enabled state it applied (the
+  /// session, the native engine and crash handling follow that state).
+  static Future<bool> _initializeCore(ScoutFlutterConfig config) async {
     _debugLogger = ScoutDebugLogger(enabled: config.debugLogging);
     final tempDir = await getTemporaryDirectory();
 
@@ -431,38 +488,44 @@ class ScoutFlutter {
     // decides the first session.
     await _hydrateUserSampling(config);
 
+    try {
+      _docsDir = await getApplicationDocumentsDirectory();
+      _disabledSinceFile = File('${_docsDir!.path}/scout_disabled_since');
+      if (await _disabledSinceFile!.exists()) {
+        _disabledSinceMs = int.tryParse(
+          (await _disabledSinceFile!.readAsString()).trim(),
+        );
+      }
+    } catch (_) {}
+
+    // The state this bootstrap applies. A setEnabled() landing later only
+    // flips the gate; _bootstrap runs the transition once the pipeline is up.
+    final bootEnabled = _enabled;
+    _debugLogger.rumEnabled(bootEnabled, reason: 'init');
+
     // Session manager FIRST — before the tracer, meter, and every
     // detector. The sampling gates fail closed when no session exists,
     // so anything wired before this point would drop its telemetry;
     // creating the session up front means startup spans (long_task,
     // app_startup, early frames) are subject to the same per-session
     // sampling as everything else instead of leaking past it.
-    _sessionManager = SessionManager(
-      sampleRate: config.sessionSampleRate,
-      timeoutMinutes: config.sessionTimeoutMinutes,
-      maxDurationMinutes: config.maxSessionDurationMinutes,
-      pendingUserSampling: () => _pendingUserSampling,
-      onSessionChanged:
-          (sessionId, sampled) => _debugLogger.session(
-            sessionId: sessionId,
-            sampled: sampled,
-            source:
-                _sessionManager?.samplingSource ??
-                (_pendingUserSampling != null
-                    ? kSamplingSourceUser
-                    : kSamplingSourceFallback),
-          ),
-    );
-
-    try {
-      final docsDir = await getApplicationDocumentsDirectory();
-      await _sessionManager!.start(directory: docsDir);
-    } catch (_) {}
+    //
+    // Disabled at launch: no session at all. Nothing is minted, and the
+    // persisted one is neither resumed nor touched, so a forced wake-up
+    // outside working hours never counts as a session.
+    if (bootEnabled) {
+      _sessionManager = _newSessionManager(config);
+      try {
+        final docsDir = _docsDir ?? await getApplicationDocumentsDirectory();
+        await _sessionManager!.start(directory: docsDir);
+      } catch (_) {}
+    }
 
     // Single sampling gate shared by every span/metric/log emit path.
     _sampleGate = ScoutSampleGate(
       sessionResolver: () => _sessionManager,
       alwaysCaptureErrors: config.alwaysCaptureErrors,
+      enabledResolver: () => _enabled,
     );
 
     final resourceAttrs = <String, Object>{
@@ -509,6 +572,7 @@ class ScoutFlutter {
       'enableFrameMetrics': config.enableFrameMetrics,
       'metricExportIntervalSeconds': config.metricExportIntervalSeconds ?? -1,
       'debugLogging': config.debugLogging,
+      'enabled': bootEnabled,
       if (_pendingUserSampling != null) 'userSampling': _pendingUserSampling,
       if (config.firstPartyHosts != null)
         'firstPartyHosts': config.firstPartyHosts,
@@ -536,8 +600,11 @@ class ScoutFlutter {
           },
         );
       }
-      final native = await ScoutPlatformChannel.getSessionIdentity();
-      if (native != null) _adoptNativeIdentity(native);
+      // Disabled: the owner has no session to report.
+      if (bootEnabled) {
+        final native = await ScoutPlatformChannel.getSessionIdentity();
+        if (native != null) _adoptNativeIdentity(native);
+      }
     }
     _markIdentityResolved();
 
@@ -592,15 +659,31 @@ class ScoutFlutter {
                           : const {'flutter.frame.duration'},
                 ))
             : null;
-    final MetricReader? metricReader =
+    _metricExporter =
         metricExporter == null
             ? null
+            : EnabledGatedMetricExporter(metricExporter, open: bootEnabled);
+    final MetricReader? metricReader =
+        _metricExporter == null
+            ? null
             : PeriodicExportingMetricReader(
-              metricExporter,
+              _metricExporter!,
               interval: Duration(
                 seconds: config.effectiveMetricExportIntervalSeconds,
               ),
             );
+    _metricReader = metricReader;
+    _spanProcessor = EnabledGatedSpanProcessor(
+      BatchSpanProcessor(
+        spanExporter,
+        BatchSpanProcessorConfig(
+          maxQueueSize: config.maxQueueSize,
+          scheduleDelay: Duration(seconds: config.exportIntervalSeconds),
+          maxExportBatchSize: config.maxExportBatchSize,
+        ),
+      ),
+      isEnabled: () => _enabled,
+    );
 
     await FlutterOTel.initialize(
       serviceName: config.serviceName,
@@ -614,16 +697,10 @@ class ScoutFlutter {
         sessionResolver: () => _sessionManager,
         alwaysCaptureErrors: config.alwaysCaptureErrors,
         logger: config.debugLogging ? _debugLogger : null,
+        enabledResolver: () => _enabled,
       ),
-      spanProcessor: BatchSpanProcessor(
-        spanExporter,
-        BatchSpanProcessorConfig(
-          maxQueueSize: config.maxQueueSize,
-          scheduleDelay: Duration(seconds: config.exportIntervalSeconds),
-          maxExportBatchSize: config.maxExportBatchSize,
-        ),
-      ),
-      metricExporter: metricExporter,
+      spanProcessor: _spanProcessor,
+      metricExporter: _metricExporter,
       metricReader: metricReader,
       resourceAttributes:
           resourceAttrs.isEmpty ? null : resourceAttrs.toAttributes(),
@@ -702,6 +779,100 @@ class ScoutFlutter {
       },
     );
 
+    // `_enabled` too: a setEnabled() during the bootstrap may have flipped
+    // it, and a crash report emitted now would only be dropped.
+    if (bootEnabled && _enabled) {
+      await _runCrashChecks();
+    } else {
+      // Disabled at launch: leave the previous launch's marker and the
+      // pending native reports alone until the first enabled point, and
+      // write no marker, so a crash now is never reported later.
+      _crashChecksPending = true;
+      if (!bootEnabled) await _recordDisabledSince();
+      // Delegated: the engine reports native crashes itself; the plugin's
+      // copies are never used, so dropping them now loses nothing.
+      if (_delegating) await _discardDelegatedCrashReports();
+    }
+
+    // Periodic offline flush (every 60 seconds)
+    _offlineFlushTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      try {
+        _flushOfflineQueue();
+      } catch (_) {}
+    });
+
+    // Structured logging — batched like spans and metrics: one export
+    // per interval (or per full batch) instead of one POST per log line.
+    if (config.enableLogging) {
+      _logExporter = FixedHttpLogExporter(
+        endpoint: httpEndpoint,
+        headers: config.headers,
+        maxRetries: config.maxRetries,
+        idleTimeout: spanLogIdleTimeout,
+      );
+      _logBatcher = ScoutLogBatcher(
+        export: (batch) => _logExporter!.export(batch),
+        onExportFailed: (batch) {
+          // Nothing produced around a disable is buffered for later.
+          if (!_enabled) return;
+          _offlineQueue?.enqueue('logs', [
+            for (final record in batch)
+              {
+                'severity_number': record.severityNumber,
+                'severity_text': record.severityText,
+                'body': record.body,
+                'timestamp_nanos': record.timestampNanos.toString(),
+                ...?record.attributes,
+              },
+          ]);
+        },
+        interval: Duration(seconds: config.exportIntervalSeconds),
+        maxExportBatchSize: config.maxExportBatchSize,
+        maxQueueSize: config.maxQueueSize,
+      )..start();
+      _logger = scout_log.ScoutLogger(onLog: _onLogEntry);
+      final early = _earlyLogs;
+      _earlyLogs = null;
+      early?.forEach(_onLogEntry);
+
+      // Capture debugPrint() as info-level logs
+      if (config.capturePrintStatements) {
+        _originalDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          _originalDebugPrint!(message, wrapWidth: wrapWidth);
+          try {
+            if (message != null && shouldCapturePrint(message)) {
+              _logger?.logInfo(message);
+            }
+          } catch (_) {}
+        };
+      }
+    }
+
+    // HTTP tracking via HttpOverrides
+    if (config.enableNetworkTracking) {
+      _previousHttpOverrides = HttpOverrides.current;
+      HttpOverrides.global = ScoutHttpOverrides(
+        existingOverrides: _previousHttpOverrides,
+        exportEndpoint: httpEndpoint,
+        ignorePatterns: config.ignoreUrlPatterns,
+        firstPartyHosts: config.firstPartyHosts,
+        onRequestCompleted: _onHttpRequestCompleted,
+        onTraceContextCreated: (traceId, spanId) {
+          _activeTraceId = traceId;
+          _activeSpanId = spanId;
+        },
+      );
+    }
+    return bootEnabled;
+  }
+
+  /// The previous launch's unclean exit (`app_crash`) and every pending
+  /// native crash report, then this session's crash marker. Runs at the
+  /// first enabled point of the process: init when the launch is enabled,
+  /// else the first `setEnabled(true)`.
+  static Future<void> _runCrashChecks() async {
+    _crashChecksPending = false;
     // Crash detection — check previous session before writing new marker.
     try {
       final previousCrash =
@@ -755,9 +926,10 @@ class ScoutFlutter {
             'network.connection.type': _connectivityType,
         });
       }
-      await _crashDetector?.markSessionStarted(
-        sessionId: _sessionManager!.sessionId,
-      );
+      final sm = _sessionManager;
+      if (_enabled && sm != null) {
+        await _crashDetector?.markSessionStarted(sessionId: sm.sessionId);
+      }
     } catch (_) {}
 
     // Drain every native-side crash pipeline. Three orthogonal sources:
@@ -776,75 +948,7 @@ class ScoutFlutter {
       await _discardDelegatedCrashReports();
     }
     _previousSessionBreadcrumbs = null;
-
-    // Periodic offline flush (every 60 seconds)
-    _offlineFlushTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      try {
-        _flushOfflineQueue();
-      } catch (_) {}
-    });
-
-    // Structured logging — batched like spans and metrics: one export
-    // per interval (or per full batch) instead of one POST per log line.
-    if (config.enableLogging) {
-      _logExporter = FixedHttpLogExporter(
-        endpoint: httpEndpoint,
-        headers: config.headers,
-        maxRetries: config.maxRetries,
-        idleTimeout: spanLogIdleTimeout,
-      );
-      _logBatcher = ScoutLogBatcher(
-        export: (batch) => _logExporter!.export(batch),
-        onExportFailed: (batch) {
-          _offlineQueue?.enqueue('logs', [
-            for (final record in batch)
-              {
-                'severity_number': record.severityNumber,
-                'severity_text': record.severityText,
-                'body': record.body,
-                'timestamp_nanos': record.timestampNanos.toString(),
-                ...?record.attributes,
-              },
-          ]);
-        },
-        interval: Duration(seconds: config.exportIntervalSeconds),
-        maxExportBatchSize: config.maxExportBatchSize,
-        maxQueueSize: config.maxQueueSize,
-      )..start();
-      _logger = scout_log.ScoutLogger(onLog: _onLogEntry);
-      final early = _earlyLogs;
-      _earlyLogs = null;
-      early?.forEach(_onLogEntry);
-
-      // Capture debugPrint() as info-level logs
-      if (config.capturePrintStatements) {
-        _originalDebugPrint = debugPrint;
-        debugPrint = (String? message, {int? wrapWidth}) {
-          _originalDebugPrint!(message, wrapWidth: wrapWidth);
-          try {
-            if (message != null && shouldCapturePrint(message)) {
-              _logger?.logInfo(message);
-            }
-          } catch (_) {}
-        };
-      }
-    }
-
-    // HTTP tracking via HttpOverrides
-    if (config.enableNetworkTracking) {
-      _previousHttpOverrides = HttpOverrides.current;
-      HttpOverrides.global = ScoutHttpOverrides(
-        existingOverrides: _previousHttpOverrides,
-        exportEndpoint: httpEndpoint,
-        ignorePatterns: config.ignoreUrlPatterns,
-        firstPartyHosts: config.firstPartyHosts,
-        onRequestCompleted: _onHttpRequestCompleted,
-        onTraceContextCreated: (traceId, spanId) {
-          _activeTraceId = traceId;
-          _activeSpanId = spanId;
-        },
-      );
-    }
+    await _clearDisabledSince();
   }
 
   /// Applies the beforeSend callback. Returns the (possibly modified) attributes,
@@ -998,6 +1102,9 @@ class ScoutFlutter {
   static void _setupLifecycleTracking() {
     _lifecycleListener = AppLifecycleListener(
       onPause: () {
+        // Disabled: no session to extend, and the crash marker (possibly a
+        // previous launch's, kept for the next enabled point) stays as is.
+        if (!_enabled) return;
         try {
           _sessionManager?.onBackground();
           _crashDetector?.markSessionPaused();
@@ -1011,6 +1118,7 @@ class ScoutFlutter {
         } catch (_) {}
       },
       onResume: () {
+        if (!_enabled) return;
         try {
           _sessionManager?.onForeground();
           _crashDetector?.markSessionResumed();
@@ -1271,7 +1379,8 @@ class ScoutFlutter {
                 } catch (_) {}
               },
     );
-    _nativeVitalsCollector!.start();
+    // Disabled: no polling at all; setEnabled(true) starts it.
+    if (_enabled) _nativeVitalsCollector!.start();
   }
 
   static Future<String> _resolveServiceVersion(String? configured) async {
@@ -1625,6 +1734,23 @@ class ScoutFlutter {
         .toList();
   }
 
+  /// Process deaths at or after [disabledSinceMs] happened while RUM was
+  /// disabled and must never be reported, not even on a later enabled
+  /// launch. Deaths before it come from an enabled run and are kept.
+  @visibleForTesting
+  static List<Map<String, dynamic>> dropDisabledPeriodExitInfo(
+    List<Map<String, dynamic>> records,
+    int? disabledSinceMs,
+  ) {
+    if (disabledSinceMs == null) return records;
+    return records
+        .where(
+          (r) =>
+              ((r['crash_death_timestamp_ms'] as int?) ?? 0) < disabledSinceMs,
+        )
+        .toList();
+  }
+
   /// Highest death timestamp in [records]; 0 when none carry one.
   @visibleForTesting
   static int exitInfoWatermarkOf(List<Map<String, dynamic>> records) {
@@ -1686,7 +1812,10 @@ class ScoutFlutter {
     final exitInfoAll = results.removeLast();
     final watermark = await _readExitInfoWatermark();
     final exitInfoNew =
-        selectNewExitInfoRecords(exitInfoAll, watermark)
+        dropDisabledPeriodExitInfo(
+              selectNewExitInfoRecords(exitInfoAll, watermark),
+              _disabledSinceMs,
+            )
             .where((r) => isCrashClassExitInfo(r['crash_type'] as String?))
             .toList();
     final newWatermark = exitInfoWatermarkOf(exitInfoAll);
@@ -1782,6 +1911,9 @@ class ScoutFlutter {
 
   /// Record a breadcrumb and persist to disk for crash survival.
   static void _recordAndPersistBreadcrumb(String type, String message) {
+    // Disabled: nothing is recorded, so a later crash report never carries
+    // context from the disabled period.
+    if (!_enabled) return;
     try {
       _breadcrumbManager.record(type, message);
       final json = _safeBreadcrumbsJson();
@@ -1884,6 +2016,173 @@ class ScoutFlutter {
     _setPendingUserSampling(value);
     _debugLogger.userSampling(value);
     if (_delegating) unawaited(ScoutPlatformChannel.setUserSampling(value));
+  }
+
+  /// Turns RUM on or off at runtime, for example from your own work-hours
+  /// schedule. The launch state comes from [ScoutFlutterConfig.enabled];
+  /// nothing is persisted.
+  ///
+  /// Turning it off flushes what was already recorded (best effort), then
+  /// ends the session. From then on nothing leaves the device and nothing
+  /// is buffered: no spans, logs, metrics or crash reports, errors included
+  /// (it overrides `alwaysCaptureErrors`), and a crash while disabled is
+  /// never reported later. Spans started before and ending after the
+  /// switch are dropped. [sessionId] is null while disabled.
+  ///
+  /// Turning it on always starts a new session, sampled like any new
+  /// session (the [userSampling] value if set, else `sessionSampleRate`).
+  ///
+  /// Calling it with the current state does nothing. Safe to call before
+  /// [initialize]; that value then wins over the config. When the native
+  /// engine owns the session, the call is forwarded and the engine starts
+  /// or ends its session the same way. [setUser], [setUserSampling] and
+  /// attribute calls made while disabled are kept and apply once enabled.
+  static void setEnabled(bool value) {
+    if (!_initializeCalled) {
+      _enabled = value;
+      _enabledSetAtRuntime = true;
+      return;
+    }
+    if (value == _enabled) return;
+    _enabled = value;
+    _enabledSetAtRuntime = true;
+    // The bootstrap is still running: the gate is already flipped, and
+    // _bootstrap runs the transition once the pipeline exists.
+    if (!_coreReady) return;
+    _scheduleTransition(value);
+  }
+
+  /// Whether RUM is currently on. See [setEnabled].
+  static bool get isEnabled => _enabled;
+
+  /// Runs the synchronous half of a transition now (session, gates,
+  /// collectors) and queues the asynchronous half (flush, native engine,
+  /// crash bookkeeping) behind any transition still in flight.
+  static void _scheduleTransition(bool value) {
+    _debugLogger.rumEnabled(value, reason: 'setEnabled');
+    if (value) {
+      _enableNow();
+      _transitions = _transitions.then((_) => _afterEnable());
+    } else {
+      final ending = _sessionManager;
+      _disableNow();
+      _transitions = _transitions.then((_) => _afterDisable(ending));
+    }
+  }
+
+  static void _disableNow() {
+    _sessionManager = null;
+    _nativeIdentity = null;
+    _nativeVitalsCollector?.stop();
+  }
+
+  static Future<void> _afterDisable(SessionManager? ending) async {
+    try {
+      // First, so a crash from here on is never reported later.
+      await _crashDetector?.markSessionEnded();
+      await _recordDisabledSince();
+      // Standalone: the native side only needs this for its crash reporter.
+      if (!_delegating) await ScoutPlatformChannel.setEnabled(false);
+      // Best-effort flush of what was recorded while enabled. In delegated
+      // mode it reaches the engine before the engine is told to stop.
+      await _flushPipelines();
+      if (!_enabled) _metricExporter?.open = false;
+      if (_delegating) await ScoutPlatformChannel.setEnabled(false);
+      await ending?.end();
+    } catch (_) {}
+  }
+
+  static void _enableNow() {
+    final config = _config;
+    if (config != null) {
+      // Always a fresh session: sampling resolves like any new session.
+      final sm = _newSessionManager(config);
+      _sessionManager = sm;
+      final dir = _docsDir;
+      if (dir != null) unawaited(sm.start(directory: dir, resume: false));
+    }
+    _metricExporter?.open = true;
+    _nativeVitalsCollector?.start();
+    if (_delegating) {
+      // The engine starts its own new session; withhold ids until it
+      // answers so sessionId never reports one that is not exported.
+      _nativeIdentity = null;
+      _identityResolved = Completer<void>();
+    }
+  }
+
+  static Future<void> _afterEnable() async {
+    try {
+      // A later setEnabled(false) already superseded this one.
+      if (!_enabled) return;
+      await ScoutPlatformChannel.setEnabled(true);
+      if (_delegating) {
+        final native = await ScoutPlatformChannel.getSessionIdentity();
+        if (native != null && _enabled) _adoptNativeIdentity(native);
+      }
+      _markIdentityResolved();
+      if (!_enabled) return;
+      if (_crashChecksPending) {
+        await _runCrashChecks();
+      } else {
+        final sm = _sessionManager;
+        if (sm != null) {
+          await _crashDetector?.markSessionStarted(sessionId: sm.sessionId);
+        }
+        await _clearDisabledSince();
+      }
+    } catch (_) {
+    } finally {
+      _markIdentityResolved();
+    }
+  }
+
+  static Future<void> _flushPipelines() async {
+    try {
+      await _spanProcessor?.forceFlush();
+    } catch (_) {}
+    try {
+      await _metricReader?.forceFlush();
+    } catch (_) {}
+    try {
+      await _logBatcher?.flush();
+    } catch (_) {}
+  }
+
+  static SessionManager _newSessionManager(ScoutFlutterConfig config) =>
+      SessionManager(
+        sampleRate: config.sessionSampleRate,
+        timeoutMinutes: config.sessionTimeoutMinutes,
+        maxDurationMinutes: config.maxSessionDurationMinutes,
+        pendingUserSampling: () => _pendingUserSampling,
+        onSessionChanged:
+            (sessionId, sampled) => _debugLogger.session(
+              sessionId: sessionId,
+              sampled: sampled,
+              source:
+                  _sessionManager?.samplingSource ??
+                  (_pendingUserSampling != null
+                      ? kSamplingSourceUser
+                      : kSamplingSourceFallback),
+            ),
+      );
+
+  /// Persists the moment RUM went disabled. The earliest one is kept until
+  /// the next enabled point, so exit-info deaths from every disabled launch
+  /// in between are dropped.
+  static Future<void> _recordDisabledSince() async {
+    _disabledSinceMs ??= DateTime.now().millisecondsSinceEpoch;
+    try {
+      await _disabledSinceFile?.writeAsString('$_disabledSinceMs');
+    } catch (_) {}
+  }
+
+  static Future<void> _clearDisabledSince() async {
+    _disabledSinceMs = null;
+    try {
+      final f = _disabledSinceFile;
+      if (f != null && await f.exists()) await f.delete();
+    } catch (_) {}
   }
 
   /// The latest app-supplied per-user sampling value; `null` means none.
@@ -2052,6 +2351,7 @@ class ScoutFlutter {
     String message, {
     Map<String, Object>? attributes,
   }) {
+    if (!_enabled) return;
     final logger = _logger;
     if (logger != null) {
       logger.log(level, message, attributes: attributes);
@@ -2115,6 +2415,8 @@ class ScoutFlutter {
 
   static void _onLogEntry(scout_log.ScoutLogEntry entry) {
     try {
+      // The kill switch holds in delegated mode too, errors included.
+      if (!_enabled) return;
       if (!_delegating &&
           !_sampleGate.shouldSampleLog(
             isError: entry.level == scout_log.LogLevel.error,
@@ -2191,7 +2493,7 @@ class ScoutFlutter {
   }
 
   static Future<void> _flushOfflineQueue() async {
-    if (_flushing || _offlineQueue == null) return;
+    if (!_enabled || _flushing || _offlineQueue == null) return;
     _flushing = true;
     try {
       final batches = await _offlineQueue!.dequeueAll();
@@ -2264,6 +2566,18 @@ class ScoutFlutter {
     _pendingUserSampling = null;
     _userSamplingFile = null;
     _userSamplingSetAtRuntime = false;
+    _enabled = true;
+    _enabledSetAtRuntime = false;
+    _initializeCalled = false;
+    _coreReady = false;
+    _transitions = Future<void>.value();
+    _crashChecksPending = false;
+    _disabledSinceMs = null;
+    _disabledSinceFile = null;
+    _docsDir = null;
+    _spanProcessor = null;
+    _metricExporter = null;
+    _metricReader = null;
     _nativeIdentity = null;
     _identityResolved = null;
     _delegating = false;

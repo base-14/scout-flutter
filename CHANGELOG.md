@@ -1,3 +1,38 @@
+## Unreleased
+
+### Added
+- **Runtime RUM kill switch: `enabled` / `ScoutFlutter.setEnabled()` /
+  `ScoutFlutter.isEnabled`.** `ScoutFlutterConfig.enabled` (default `true`)
+  sets the state for this launch, and `setEnabled(bool)` flips it in the same
+  process, for example from your app's own work-hours schedule. Unlike
+  `setUserSampling(false)`, which only applies at the next session and still
+  sends logs and metrics, this stops everything at once.
+  - While disabled nothing leaves the device and nothing is buffered: no
+    spans, logs, metrics or crash reports, errors included (it overrides
+    `alwaysCaptureErrors`). No OTLP request is made.
+  - No session is created, resumed, extended or counted. A launch that starts
+    disabled (say, a WorkManager wake-up at night) leaves the persisted
+    session untouched and emits no lifecycle or startup telemetry.
+    `sessionId` is `null` while disabled.
+  - Disabling flushes what was already recorded (best effort), then ends the
+    session. Enabling always starts a new session, sampled like any new one.
+  - Crashes, ANRs and native crashes while disabled are never reported, not
+    even on a later launch. A crash from an earlier enabled run is kept until
+    the next enabled point and reported then.
+  - Not persisted. A `setEnabled` call before `initialize` wins over the
+    config. Calling it with the current state does nothing. `setUser`,
+    `setUserSampling` and attribute calls made while disabled are kept.
+  - The value is passed to the native engine at init and `setEnabled` is
+    forwarded to it. In hybrid apps, Flutter forwards to the native owner and
+    follows its session.
+  - With `debugLogging`, the state is logged at init and on every transition
+    (`[scout] enabled=false (init)`).
+  - Needs scout-android / scout-ios with the native `enabled` API. Merge only
+    after they are published.
+- Follow-ups, not in this release: the WebView bridge does not pass the state
+  to pages, and in multi-process Android apps each process takes its own
+  `enabled` from its own config (no cross-process propagation).
+
 ## 0.4.0
 
 ### Added

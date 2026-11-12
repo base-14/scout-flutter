@@ -162,6 +162,15 @@ class ScoutFlutterConfig {
   /// stored value.
   final bool? userSampling;
 
+  /// Whether RUM runs for this launch. Default true. When false, nothing
+  /// leaves the device: no spans, logs, metrics, or crash reports (errors
+  /// included, whatever [alwaysCaptureErrors] says), no session is started
+  /// or resumed, and nothing is buffered for later. Flip it at runtime with
+  /// `ScoutFlutter.setEnabled`. Not persisted: pass the value your app
+  /// decides for this launch (for example, from its own work-hours
+  /// schedule).
+  final bool enabled;
+
   /// Minutes of inactivity before rotating the session. Default 30.
   final int sessionTimeoutMinutes;
 
@@ -238,6 +247,7 @@ class ScoutFlutterConfig {
     double sessionSampleRate = 1.0,
     this.alwaysCaptureErrors = true,
     this.userSampling,
+    this.enabled = true,
     this.sessionTimeoutMinutes = 30,
     int maxSessionDurationMinutes = 60,
     this.enableLogging = true,

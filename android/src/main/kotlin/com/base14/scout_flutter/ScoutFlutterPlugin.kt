@@ -97,6 +97,10 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                     result.success(false)
                     return
                 }
+                val enabled = call.argument<Boolean>("enabled") ?: true
+                // Before the engine starts, so the plugin's crash reporter
+                // follows this launch's state even if the engine fails.
+                CrashReporter.setEnabled(enabled)
                 val ok = runCatching {
                     val flutterVersion = call.argument<String>("scoutFlutterVersion")
                     Scout.initialize(
@@ -127,6 +131,7 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
                             firstPartyHosts = call.argument<List<String>>("firstPartyHosts") ?: emptyList(),
                             debugLogging = call.argument<Boolean>("debugLogging") ?: false,
                             userSampling = call.argument<Boolean>("userSampling"),
+                            enabled = enabled,
                         ),
                     )
                 }.isSuccess
@@ -161,6 +166,13 @@ class ScoutFlutterPlugin : FlutterPlugin, MethodCallHandler {
             }
             "setUserSampling" -> {
                 ScoutBridge.setUserSampling(call.argument<Boolean>("value"))
+                result.success(null)
+            }
+            "setEnabled" -> {
+                val value = call.argument<Boolean>("value") ?: true
+                CrashReporter.setEnabled(value)
+                // Standalone (engine failed to start) has nothing to forward to.
+                runCatching { ScoutBridge.setEnabled(value) }
                 result.success(null)
             }
             "setUser" -> {

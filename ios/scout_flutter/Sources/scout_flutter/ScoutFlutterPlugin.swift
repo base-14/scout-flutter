@@ -60,7 +60,8 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
                 firstPartyHosts: (args?["firstPartyHosts"] as? [String]) ?? [],
                 maxOfflineStorageMb: (args?["maxOfflineStorageMb"] as? Int) ?? 5,
                 debugLogging: (args?["debugLogging"] as? Bool) ?? false,
-                userSampling: args?["userSampling"] as? Bool
+                userSampling: args?["userSampling"] as? Bool,
+                enabled: (args?["enabled"] as? Bool) ?? true
             )
             engineStarted = true
             result(true)
@@ -102,6 +103,10 @@ public class ScoutFlutterPlugin: NSObject, FlutterPlugin {
         case "setUserSampling":
             // NSNull (Dart null) casts to nil: clear the value.
             Scout.setUserSampling((call.arguments as? [String: Any])?["value"] as? Bool)
+            result(nil)
+
+        case "setEnabled":
+            Scout.setEnabled(((call.arguments as? [String: Any])?["value"] as? Bool) ?? true)
             result(nil)
 
         case "setUser":
