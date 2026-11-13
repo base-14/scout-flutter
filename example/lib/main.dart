@@ -1,4 +1,5 @@
 import 'package:scout_flutter/scout_flutter.dart';
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 Future<void> main() async {
