@@ -1,3 +1,13 @@
+## Unreleased
+
+### Fixed
+- **iOS apps that use CocoaPods build again.** Since 0.2.0 the plugin imports the
+  native engine (`import Scout`, `import ScoutKit`), but only `Package.swift` declared it.
+  `scout_flutter.podspec` listed just `Flutter` and `KSCrash`, so every CocoaPods app (the
+  Flutter default) failed with `No such module 'Scout'`. The podspec now depends on the
+  `ScoutKit` pod at the same `ios-<version>` as `Package.swift`, and the iOS minimum is 13.0 to
+  match it.
+
 ## 0.5.0
 
 ### Added
