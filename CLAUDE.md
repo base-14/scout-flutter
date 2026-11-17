@@ -9,6 +9,9 @@ published from [scout-kotlin-multiplatform](https://github.com/base-14/scout-kot
 
 - `android/build.gradle` pins `implementation 'io.base14:scout-android:<Y>'` from Maven Central.
 - `ios/scout_flutter/Package.swift` pins `revision: "ios-<Y>"`, a git tag in that repo.
+- `ios/scout_flutter.podspec` pins `s.dependency 'ScoutKit', '<Y>'` from CocoaPods trunk. Apps that
+  build iOS with CocoaPods (the Flutter default) read only this file, so it must match the
+  `Package.swift` revision. If it is missing, those apps fail with `No such module 'Scout'`.
 
 The full order is in scout-kotlin-multiplatform's
 [`RELEASING.md`](https://github.com/base-14/scout-kotlin-multiplatform/blob/main/RELEASING.md):
@@ -29,7 +32,7 @@ gh api repos/base-14/scout-kotlin-multiplatform/git/ref/tags/ios-Y >/dev/null &&
 ```
 
 1. Make one release commit on `main` (`release <version>: pin scout-android Y and scout-ios Y`):
-   - Update the two pins above.
+   - Update the three pins above.
    - Set the new version in both `pubspec.yaml` `version:` and `lib/src/scope.dart`
      `kScopeVersion`. `scope_version_sync_test.dart` enforces that they match.
    - In `CHANGELOG.md`, change `## Unreleased` to `## <version>`.

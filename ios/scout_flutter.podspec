@@ -10,6 +10,9 @@ Pod::Spec.new do |s|
   s.source_files     = 'scout_flutter/Sources/scout_flutter/**/*.swift'
   s.dependency 'Flutter'
   s.dependency 'KSCrash', '~> 2.0.0-rc'
-  s.platform         = :ios, '12.0'
+  # The native engine (modules Scout + ScoutKit). Keep equal to the ios-<version>
+  # revision in scout_flutter/Package.swift.
+  s.dependency 'ScoutKit', '0.1.13'
+  s.platform         = :ios, '13.0'
   s.swift_version    = '5.0'
 end
